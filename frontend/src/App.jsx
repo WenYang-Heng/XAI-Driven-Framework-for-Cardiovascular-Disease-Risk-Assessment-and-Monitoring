@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AdminAIMonitoringPanel } from "./pages/admin";
 import { AuthPage } from "./pages/auth";
 import { DomainExpertDashboard } from "./pages/domain-expert";
 import { PatientDashboard } from "./pages/patient";
@@ -10,6 +11,10 @@ function App() {
     return <DomainExpertDashboard onLogout={() => setCurrentPage("login")} />;
   }
 
+  if (currentPage === "admin") {
+    return <AdminAIMonitoringPanel onLogout={() => setCurrentPage("login")} />;
+  }
+
   if (currentPage === "patient") {
     return <PatientDashboard onLogout={() => setCurrentPage("login")} />;
   }
@@ -17,7 +22,13 @@ function App() {
   return (
     <AuthPage
       onAuthenticated={(role) =>
-        setCurrentPage(role === "general-user" ? "patient" : "domain-expert")
+        setCurrentPage(
+          role === "general-user"
+            ? "patient"
+            : role === "admin"
+              ? "admin"
+              : "domain-expert",
+        )
       }
     />
   );

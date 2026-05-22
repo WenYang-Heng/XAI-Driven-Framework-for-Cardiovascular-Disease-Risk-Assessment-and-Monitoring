@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# FastAPI and local runtime files
+*.log
+logs/
+tmp/
+temp/
+
+# ML artifacts and datasets
+*.pkl
+*.pickle
+*.joblib
+*.model
+models/
+data/
+datasets/
+artifacts/
+mlruns/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+.vite/
+
+# IDEs and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+

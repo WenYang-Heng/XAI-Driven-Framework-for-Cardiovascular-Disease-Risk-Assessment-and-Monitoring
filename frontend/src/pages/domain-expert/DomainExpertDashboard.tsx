@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BarChart3,
   Brain,
   CheckCircle2,
   ClipboardList,
+  Download,
+  FileSpreadsheet,
   FileText,
   Gauge,
   History,
@@ -14,6 +16,7 @@ import {
   ShieldCheck,
   Sparkles,
   Stethoscope,
+  Upload,
 } from "lucide-react";
 import {
   Bar,
@@ -38,14 +41,37 @@ type MainTab =
   | "rationale"
   | "history";
 
-type XaiTab = "overview" | "shap" | "lime" | "whatif" | "global" | "rules";
+type XaiTab = "overview" | "shap" | "lime" | "whatif" | "global";
+
+type AssessmentMode = "single" | "batch";
 
 type AssessmentModel =
   | "Random Forest"
   | "XGBoost"
   | "Logistic Regression"
-  | "Support Vector Machine"
   | "Neural Network";
+
+type ModelKey =
+  | "random_forest"
+  | "xgboost"
+  | "logistic_regression"
+  | "neural_network";
+
+type ModelPerformance = {
+  model_name: ModelKey;
+  accuracy: number;
+  precision: number;
+  sensitivity_recall: number;
+  specificity: number;
+  f1_score: number;
+  auc_roc: number;
+  confusion_matrix: {
+    true_negative: number;
+    false_positive: number;
+    false_negative: number;
+    true_positive: number;
+  };
+};
 
 type PatientForm = {
   patientId: string;
@@ -122,12 +148,12 @@ const xaiTabs: { id: XaiTab; label: string }[] = [
   { id: "lime", label: "LIME" },
   { id: "whatif", label: "What-if" },
   { id: "global", label: "Global Insights" },
-  { id: "rules", label: "Rules" },
 ];
 
 const modelProfiles: Record<
   AssessmentModel,
   {
+    key: ModelKey;
     modelType: string;
     auc: string;
     lastTrained: string;
@@ -136,6 +162,7 @@ const modelProfiles: Record<
   }
 > = {
   "Random Forest": {
+    key: "random_forest",
     modelType: "Ensemble tree classifier",
     auc: "0.91",
     lastTrained: "2026-04-18",
@@ -143,6 +170,7 @@ const modelProfiles: Record<
     status: "Ready",
   },
   XGBoost: {
+    key: "xgboost",
     modelType: "Gradient-boosted tree classifier",
     auc: "0.93",
     lastTrained: "2026-04-22",
@@ -150,20 +178,15 @@ const modelProfiles: Record<
     status: "Ready",
   },
   "Logistic Regression": {
+    key: "logistic_regression",
     modelType: "Regularized linear classifier",
     auc: "0.86",
     lastTrained: "2026-04-11",
     recommendedUse: "Recommended for coefficient-level clinical review",
     status: "Ready",
   },
-  "Support Vector Machine": {
-    modelType: "Kernel-based margin classifier",
-    auc: "0.88",
-    lastTrained: "2026-04-15",
-    recommendedUse: "Recommended for non-linear boundary validation studies",
-    status: "Ready",
-  },
   "Neural Network": {
+    key: "neural_network",
     modelType: "Multilayer perceptron classifier",
     auc: "0.90",
     lastTrained: "2026-04-20",
@@ -173,6 +196,98 @@ const modelProfiles: Record<
 };
 
 const assessmentModelOptions = Object.keys(modelProfiles) as AssessmentModel[];
+
+const batchTemplateColumns = [
+  "age",
+  "sex",
+  "cp",
+  "trestbps",
+  "chol",
+  "fbs",
+  "restecg",
+  "thalach",
+  "exang",
+  "oldpeak",
+  "slope",
+  "ca",
+  "thal",
+];
+
+const batchTemplateRows = [
+  ["55", "1", "4", "145", "220", "0", "1", "150", "1", "1.4", "2", "0", "7"],
+  ["60", "1", "3", "150", "260", "1", "0", "140", "1", "2.1", "2", "1", "7"],
+];
+
+const batchTemplateCsv = [
+  batchTemplateColumns.join(","),
+  ...batchTemplateRows.map((row) => row.join(",")),
+].join("\n");
+
+// import.meta.env is not typed in some TS configs; cast to any to access Vite env vars
+const ML_API_BASE_URL = (import.meta as any).env?.VITE_ML_API_URL ?? "http://localhost:8001";
+
+const fallbackModelPerformance: Record<AssessmentModel, ModelPerformance> = {
+  "Random Forest": {
+    model_name: "random_forest",
+    accuracy: 0.85,
+    precision: 0.86,
+    sensitivity_recall: 0.84,
+    specificity: 0.86,
+    f1_score: 0.85,
+    auc_roc: 0.91,
+    confusion_matrix: {
+      true_negative: 25,
+      false_positive: 4,
+      false_negative: 5,
+      true_positive: 27,
+    },
+  },
+  XGBoost: {
+    model_name: "xgboost",
+    accuracy: 0.87,
+    precision: 0.88,
+    sensitivity_recall: 0.86,
+    specificity: 0.88,
+    f1_score: 0.87,
+    auc_roc: 0.93,
+    confusion_matrix: {
+      true_negative: 26,
+      false_positive: 3,
+      false_negative: 4,
+      true_positive: 28,
+    },
+  },
+  "Logistic Regression": {
+    model_name: "logistic_regression",
+    accuracy: 0.81,
+    precision: 0.82,
+    sensitivity_recall: 0.81,
+    specificity: 0.82,
+    f1_score: 0.81,
+    auc_roc: 0.86,
+    confusion_matrix: {
+      true_negative: 24,
+      false_positive: 5,
+      false_negative: 6,
+      true_positive: 26,
+    },
+  },
+  "Neural Network": {
+    model_name: "neural_network",
+    accuracy: 0.84,
+    precision: 0.85,
+    sensitivity_recall: 0.83,
+    specificity: 0.85,
+    f1_score: 0.84,
+    auc_roc: 0.9,
+    confusion_matrix: {
+      true_negative: 25,
+      false_positive: 4,
+      false_negative: 5,
+      true_positive: 27,
+    },
+  },
+};
 
 const contributionData = [
   { feature: "Cholesterol", value: 0.31 },
@@ -247,6 +362,133 @@ const historyRows = [
   },
 ];
 
+const batchRows = [
+  {
+    row: 7,
+    patient: "CSV-0007",
+    score: 0.91,
+    category: "High",
+    status: "Success",
+    keySignal: "ST depression and thalassemia defect category",
+    inputSummary: [
+      ["Age", "61"],
+      ["Sex", "Male"],
+      ["Chest Pain Type", "Asymptomatic"],
+      ["Resting BP", "152 mmHg"],
+      ["Cholesterol", "268 mg/dL"],
+      ["Max Heart Rate", "132"],
+      ["Exercise-Induced Angina", "Yes"],
+      ["Oldpeak", "2.8"],
+      ["Major Vessels", "2"],
+      ["Thalassemia", "Reversible defect"],
+    ],
+    explanations: [
+      "ST depression during exercise contributed to the risk estimate.",
+      "Thalassemia defect category contributed to the risk estimate.",
+      "More colored major vessels contributed to the risk estimate.",
+    ],
+  },
+  {
+    row: 18,
+    patient: "CSV-0018",
+    score: 0.86,
+    category: "High",
+    status: "Success",
+    keySignal: "Exercise-induced angina and asymptomatic chest pain",
+    inputSummary: [
+      ["Age", "58"],
+      ["Sex", "Male"],
+      ["Chest Pain Type", "Asymptomatic"],
+      ["Resting BP", "148 mmHg"],
+      ["Cholesterol", "244 mg/dL"],
+      ["Max Heart Rate", "140"],
+      ["Exercise-Induced Angina", "Yes"],
+      ["Oldpeak", "2.1"],
+      ["Major Vessels", "1"],
+      ["Thalassemia", "Reversible defect"],
+    ],
+    explanations: [
+      "Exercise induced angina increased the risk estimate.",
+      "Asymptomatic chest pain type is associated with higher disease risk in this dataset.",
+      "ST depression during exercise contributed to the risk estimate.",
+    ],
+  },
+  {
+    row: 42,
+    patient: "CSV-0042",
+    score: 0.74,
+    category: "High",
+    status: "Success",
+    keySignal: "Elevated blood pressure and high cholesterol",
+    inputSummary: [
+      ["Age", "64"],
+      ["Sex", "Female"],
+      ["Chest Pain Type", "Non-anginal pain"],
+      ["Resting BP", "156 mmHg"],
+      ["Cholesterol", "281 mg/dL"],
+      ["Max Heart Rate", "137"],
+      ["Exercise-Induced Angina", "No"],
+      ["Oldpeak", "1.6"],
+      ["Major Vessels", "1"],
+      ["Thalassemia", "Normal"],
+    ],
+    explanations: [
+      "Elevated resting blood pressure contributed to the risk estimate.",
+      "High cholesterol contributed to the risk estimate.",
+      "ST depression during exercise contributed to the risk estimate.",
+    ],
+  },
+  {
+    row: 63,
+    patient: "CSV-0063",
+    score: 0.62,
+    category: "Moderate",
+    status: "Success",
+    keySignal: "Oldpeak and resting ECG abnormality",
+    inputSummary: [
+      ["Age", "52"],
+      ["Sex", "Male"],
+      ["Chest Pain Type", "Atypical angina"],
+      ["Resting BP", "138 mmHg"],
+      ["Cholesterol", "226 mg/dL"],
+      ["Max Heart Rate", "149"],
+      ["Exercise-Induced Angina", "No"],
+      ["Oldpeak", "1.4"],
+      ["Major Vessels", "0"],
+      ["Thalassemia", "Normal"],
+    ],
+    explanations: [
+      "ST depression during exercise contributed to the risk estimate.",
+      "Resting ECG abnormality was present in this row.",
+    ],
+  },
+  {
+    row: 74,
+    patient: "CSV-0074",
+    score: 0,
+    category: "Failed",
+    status: "Failed",
+    keySignal: "Invalid thal value; expected 3, 6, or 7",
+    inputSummary: [],
+    explanations: ["This row failed validation and was not assessed."],
+  },
+];
+
+const batchRiskDistribution = [
+  { level: "High", count: 24, fill: "#ef4444" },
+  { level: "Moderate", count: 51, fill: "#f59e0b" },
+  { level: "Low", count: 21, fill: "#10b981" },
+  { level: "Failed", count: 4, fill: "#94a3b8" },
+];
+
+const batchDriverData = [
+  { feature: "oldpeak", value: 0.29 },
+  { feature: "cp", value: 0.24 },
+  { feature: "thal", value: 0.21 },
+  { feature: "ca", value: 0.18 },
+  { feature: "exang", value: 0.15 },
+];
+
 export function DomainExpertDashboard({
   onLogout,
 }: {
@@ -254,11 +496,55 @@ export function DomainExpertDashboard({
 }) {
   const [activeTab, setActiveTab] = useState<MainTab>("new");
   const [activeXaiTab, setActiveXaiTab] = useState<XaiTab>("overview");
+  const [assessmentMode, setAssessmentMode] = useState<AssessmentMode>("single");
+  const [selectedBatchRow, setSelectedBatchRow] = useState(batchRows[0]);
   const [form, setForm] = useState<PatientForm>(defaultForm);
   const [selectedModel, setSelectedModel] =
     useState<AssessmentModel>("Random Forest");
+  const [modelPerformance, setModelPerformance] = useState<ModelPerformance>(
+    fallbackModelPerformance["Random Forest"],
+  );
+  const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
+  const [performanceError, setPerformanceError] = useState<string | null>(null);
 
   const current = tabMeta[activeTab];
+  const selectedModelKey = modelProfiles[selectedModel].key;
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadModelPerformance() {
+      setIsPerformanceLoading(true);
+      setPerformanceError(null);
+
+      try {
+        const response = await fetch(
+          `${ML_API_BASE_URL}/api/v1/models/${selectedModelKey}/metrics`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw new Error("The ML metrics API returned an error.");
+        }
+
+        const data = (await response.json()) as ModelPerformance;
+        setModelPerformance(data);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        setModelPerformance(fallbackModelPerformance[selectedModel]);
+        setPerformanceError("Showing sample metrics until the ML API is running.");
+      } finally {
+        setIsPerformanceLoading(false);
+      }
+    }
+
+    loadModelPerformance();
+
+    return () => controller.abort();
+  }, [selectedModel, selectedModelKey]);
 
   const patientSummary = useMemo(
     () => [
@@ -293,27 +579,61 @@ export function DomainExpertDashboard({
               <NewAssessment
                 form={form}
                 selectedModel={selectedModel}
+                modelPerformance={modelPerformance}
+                isPerformanceLoading={isPerformanceLoading}
+                assessmentMode={assessmentMode}
+                onAssessmentModeChange={setAssessmentMode}
                 onModelChange={setSelectedModel}
                 updateField={updateField}
                 onRun={() => setActiveTab("result")}
+                onRunBatch={() => setActiveTab("result")}
                 onClear={() => setForm(defaultForm)}
               />
             ) : null}
             {activeTab === "result" ? (
-              <AssessmentResult
-                patientSummary={patientSummary}
-                selectedModel={selectedModel}
-                onViewXai={() => setActiveTab("xai")}
-              />
+              assessmentMode === "batch" ? (
+                <BatchAssessmentResult
+                  selectedModel={selectedModel}
+                  selectedRow={selectedBatchRow}
+                  onSelectRow={setSelectedBatchRow}
+                  onViewXai={(row) => {
+                    setSelectedBatchRow(row);
+                    setActiveTab("xai");
+                  }}
+                />
+              ) : (
+                <AssessmentResult
+                  patientSummary={patientSummary}
+                  selectedModel={selectedModel}
+                  modelPerformance={modelPerformance}
+                  isPerformanceLoading={isPerformanceLoading}
+                  performanceError={performanceError}
+                  onViewXai={() => setActiveTab("xai")}
+                />
+              )
             ) : null}
             {activeTab === "xai" ? (
-              <XaiWorkspace
-                activeXaiTab={activeXaiTab}
-                setActiveXaiTab={setActiveXaiTab}
-                onGenerateSummary={() => setActiveTab("rationale")}
-              />
+              assessmentMode === "batch" ? (
+                <BatchXaiWorkspace
+                  selectedModel={selectedModel}
+                  selectedRow={selectedBatchRow}
+                  onGenerateSummary={() => setActiveTab("rationale")}
+                />
+              ) : (
+                <XaiWorkspace
+                  activeXaiTab={activeXaiTab}
+                  setActiveXaiTab={setActiveXaiTab}
+                  onGenerateSummary={() => setActiveTab("rationale")}
+                />
+              )
             ) : null}
-            {activeTab === "rationale" ? <RationaleSummary /> : null}
+            {activeTab === "rationale" ? (
+              assessmentMode === "batch" ? (
+                <BatchRationaleSummary selectedModel={selectedModel} />
+              ) : (
+                <RationaleSummary />
+              )
+            ) : null}
             {activeTab === "history" ? (
               <AssessmentHistory onViewReport={() => setActiveTab("rationale")} />
             ) : null}
@@ -412,27 +732,55 @@ function TopHeader({
 function NewAssessment({
   form,
   selectedModel,
+  modelPerformance,
+  isPerformanceLoading,
+  assessmentMode,
+  onAssessmentModeChange,
   onModelChange,
   updateField,
   onRun,
+  onRunBatch,
   onClear,
 }: {
   form: PatientForm;
   selectedModel: AssessmentModel;
+  modelPerformance: ModelPerformance;
+  isPerformanceLoading: boolean;
+  assessmentMode: AssessmentMode;
+  onAssessmentModeChange: (mode: AssessmentMode) => void;
   onModelChange: (model: AssessmentModel) => void;
   updateField: (field: keyof PatientForm, value: string) => void;
   onRun: () => void;
+  onRunBatch: () => void;
   onClear: () => void;
 }) {
   const selectedModelProfile = modelProfiles[selectedModel];
+  const [batchFileName, setBatchFileName] = useState<string | null>(null);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
       <Card className="p-6">
         <CardHeader
-          title="Patient Data Entry"
-          subtitle="Input features follow the processed Cleveland heart disease dataset schema."
+          title="New Assessment Setup"
+          subtitle="Choose a single patient assessment or upload a CSV file using the model feature schema."
         />
+
+        <section className="mt-6 grid gap-4 md:grid-cols-2">
+          <AssessmentModeCard
+            active={assessmentMode === "single"}
+            icon={ClipboardList}
+            title="Single Patient Data Entry"
+            description="Enter one patient's clinical features and run an individual risk assessment."
+            onClick={() => onAssessmentModeChange("single")}
+          />
+          <AssessmentModeCard
+            active={assessmentMode === "batch"}
+            icon={FileSpreadsheet}
+            title="Batch CSV Assessment"
+            description="Upload a CSV file with the required model features for row-by-row assessment."
+            onClick={() => onAssessmentModeChange("batch")}
+          />
+        </section>
 
         <section className="mt-6 rounded-[22px] border border-cyan-100 bg-gradient-to-br from-cyan-50/80 via-white to-white p-5">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
@@ -471,7 +819,9 @@ function NewAssessment({
                     {selectedModelProfile.modelType}
                   </p>
                 </div>
-                <Badge tone="cyan">AUC: {selectedModelProfile.auc}</Badge>
+                <Badge tone="cyan">
+                  AUC: {isPerformanceLoading ? "..." : formatMetric(modelPerformance.auc_roc)}
+                </Badge>
               </div>
               <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-1">
                 <div className="rounded-2xl bg-slate-50 px-4 py-3">
@@ -500,126 +850,14 @@ function NewAssessment({
           </p>
         </section>
 
-        {/* Cleveland dataset feature inputs for a single patient record. */}
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <TextField
-            label="Patient Reference ID"
-            value={form.patientId}
-            onChange={(value) => updateField("patientId", value)}
+        {assessmentMode === "single" ? (
+          <SinglePatientEntry form={form} updateField={updateField} />
+        ) : (
+          <BatchAssessmentEntry
+            fileName={batchFileName}
+            onFileSelected={setBatchFileName}
           />
-          <TextField
-            label="Age"
-            type="number"
-            value={form.age}
-            onChange={(value) => updateField("age", value)}
-          />
-          <SelectField
-            label="Sex"
-            value={form.sex}
-            onChange={(value) => updateField("sex", value)}
-            options={[
-              ["0", "Female = 0"],
-              ["1", "Male = 1"],
-            ]}
-          />
-          <SelectField
-            label="Chest Pain Type"
-            value={form.chestPain}
-            onChange={(value) => updateField("chestPain", value)}
-            options={[
-              ["1", "Typical angina = 1"],
-              ["2", "Atypical angina = 2"],
-              ["3", "Non-anginal pain = 3"],
-              ["4", "Asymptomatic = 4"],
-            ]}
-          />
-          <TextField
-            label="Resting Blood Pressure"
-            unit="mmHg"
-            type="number"
-            value={form.restingBp}
-            onChange={(value) => updateField("restingBp", value)}
-          />
-          <TextField
-            label="Serum Cholesterol"
-            unit="mg/dL"
-            type="number"
-            value={form.cholesterol}
-            onChange={(value) => updateField("cholesterol", value)}
-          />
-          <SelectField
-            label="Fasting Blood Sugar > 120 mg/dL"
-            value={form.fastingBloodSugar}
-            onChange={(value) => updateField("fastingBloodSugar", value)}
-            options={[
-              ["0", "No = 0"],
-              ["1", "Yes = 1"],
-            ]}
-          />
-          <SelectField
-            label="Resting ECG Result"
-            value={form.restingEcg}
-            onChange={(value) => updateField("restingEcg", value)}
-            options={[
-              ["0", "Normal = 0"],
-              ["1", "ST-T wave abnormality = 1"],
-              ["2", "Left ventricular hypertrophy = 2"],
-            ]}
-          />
-          <TextField
-            label="Maximum Heart Rate Achieved"
-            type="number"
-            value={form.maxHeartRate}
-            onChange={(value) => updateField("maxHeartRate", value)}
-          />
-          <SelectField
-            label="Exercise-Induced Angina"
-            value={form.exerciseAngina}
-            onChange={(value) => updateField("exerciseAngina", value)}
-            options={[
-              ["0", "No = 0"],
-              ["1", "Yes = 1"],
-            ]}
-          />
-          <TextField
-            label="ST Depression / Oldpeak"
-            type="number"
-            step="0.1"
-            value={form.oldpeak}
-            onChange={(value) => updateField("oldpeak", value)}
-          />
-          <SelectField
-            label="Slope of Peak Exercise ST Segment"
-            value={form.slope}
-            onChange={(value) => updateField("slope", value)}
-            options={[
-              ["1", "Upsloping = 1"],
-              ["2", "Flat = 2"],
-              ["3", "Downsloping = 3"],
-            ]}
-          />
-          <SelectField
-            label="Number of Major Vessels"
-            value={form.vessels}
-            onChange={(value) => updateField("vessels", value)}
-            options={[
-              ["0", "0"],
-              ["1", "1"],
-              ["2", "2"],
-              ["3", "3"],
-            ]}
-          />
-          <SelectField
-            label="Thalassemia Result"
-            value={form.thalassemia}
-            onChange={(value) => updateField("thalassemia", value)}
-            options={[
-              ["3", "Normal = 3"],
-              ["6", "Fixed defect = 6"],
-              ["7", "Reversible defect = 7"],
-            ]}
-          />
-        </div>
+        )}
 
         <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5">
           <p className="max-w-xl text-sm text-slate-500">
@@ -631,9 +869,16 @@ function NewAssessment({
               <RotateCcw className="h-4 w-4" />
               Clear Form
             </Button>
-            <Button onClick={onRun}>
-              <Gauge className="h-4 w-4" />
-              Run Assessment
+            <Button
+              disabled={assessmentMode === "batch" && !batchFileName}
+              onClick={assessmentMode === "single" ? onRun : onRunBatch}
+            >
+              {assessmentMode === "single" ? (
+                <Gauge className="h-4 w-4" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              {assessmentMode === "single" ? "Run Assessment" : "Run Batch Assessment"}
             </Button>
           </div>
         </div>
@@ -644,11 +889,13 @@ function NewAssessment({
         <div className="mt-5 space-y-3">
           {[
             "Required features: 13 / 13",
-            "Missing values: 0",
-            "Invalid range warnings: 0",
+            assessmentMode === "single" ? "Missing values: 0" : `Selected file: ${batchFileName ?? "None"}`,
+            assessmentMode === "single" ? "Invalid range warnings: 0" : "Accepted formats: CSV",
             `Selected model: ${selectedModel}`,
             `Model status: ${selectedModelProfile.status}`,
-            "Status: Ready for assessment",
+            assessmentMode === "single" || batchFileName
+              ? "Status: Ready for assessment"
+              : "Status: Waiting for CSV upload",
           ].map((item) => (
             <div
               key={item}
@@ -668,13 +915,516 @@ function NewAssessment({
   );
 }
 
+function AssessmentModeCard({
+  active,
+  icon: Icon,
+  title,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof ClipboardList;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-[22px] border p-5 text-left transition focus:outline-none focus:ring-4 focus:ring-cyan-100 ${
+        active
+          ? "border-cyan-300 bg-cyan-50 text-cyan-950 shadow-sm"
+          : "border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50/60"
+      }`}
+    >
+      <div className="flex items-start gap-4">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
+            active ? "bg-cyan-600 text-white" : "bg-slate-100 text-slate-500"
+          }`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold">{title}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            {description}
+          </p>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function SinglePatientEntry({
+  form,
+  updateField,
+}: {
+  form: PatientForm;
+  updateField: (field: keyof PatientForm, value: string) => void;
+}) {
+  return (
+    <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <TextField
+        label="Patient Reference ID"
+        value={form.patientId}
+        onChange={(value) => updateField("patientId", value)}
+      />
+      <TextField
+        label="Age"
+        type="number"
+        value={form.age}
+        onChange={(value) => updateField("age", value)}
+      />
+      <SelectField
+        label="Sex"
+        value={form.sex}
+        onChange={(value) => updateField("sex", value)}
+        options={[
+          ["0", "Female = 0"],
+          ["1", "Male = 1"],
+        ]}
+      />
+      <SelectField
+        label="Chest Pain Type"
+        value={form.chestPain}
+        onChange={(value) => updateField("chestPain", value)}
+        options={[
+          ["1", "Typical angina = 1"],
+          ["2", "Atypical angina = 2"],
+          ["3", "Non-anginal pain = 3"],
+          ["4", "Asymptomatic = 4"],
+        ]}
+      />
+      <TextField
+        label="Resting Blood Pressure"
+        unit="mmHg"
+        type="number"
+        value={form.restingBp}
+        onChange={(value) => updateField("restingBp", value)}
+      />
+      <TextField
+        label="Serum Cholesterol"
+        unit="mg/dL"
+        type="number"
+        value={form.cholesterol}
+        onChange={(value) => updateField("cholesterol", value)}
+      />
+      <SelectField
+        label="Fasting Blood Sugar > 120 mg/dL"
+        value={form.fastingBloodSugar}
+        onChange={(value) => updateField("fastingBloodSugar", value)}
+        options={[
+          ["0", "No = 0"],
+          ["1", "Yes = 1"],
+        ]}
+      />
+      <SelectField
+        label="Resting ECG Result"
+        value={form.restingEcg}
+        onChange={(value) => updateField("restingEcg", value)}
+        options={[
+          ["0", "Normal = 0"],
+          ["1", "ST-T wave abnormality = 1"],
+          ["2", "Left ventricular hypertrophy = 2"],
+        ]}
+      />
+      <TextField
+        label="Maximum Heart Rate Achieved"
+        type="number"
+        value={form.maxHeartRate}
+        onChange={(value) => updateField("maxHeartRate", value)}
+      />
+      <SelectField
+        label="Exercise-Induced Angina"
+        value={form.exerciseAngina}
+        onChange={(value) => updateField("exerciseAngina", value)}
+        options={[
+          ["0", "No = 0"],
+          ["1", "Yes = 1"],
+        ]}
+      />
+      <TextField
+        label="ST Depression / Oldpeak"
+        type="number"
+        step="0.1"
+        value={form.oldpeak}
+        onChange={(value) => updateField("oldpeak", value)}
+      />
+      <SelectField
+        label="Slope of Peak Exercise ST Segment"
+        value={form.slope}
+        onChange={(value) => updateField("slope", value)}
+        options={[
+          ["1", "Upsloping = 1"],
+          ["2", "Flat = 2"],
+          ["3", "Downsloping = 3"],
+        ]}
+      />
+      <SelectField
+        label="Number of Major Vessels"
+        value={form.vessels}
+        onChange={(value) => updateField("vessels", value)}
+        options={[
+          ["0", "0"],
+          ["1", "1"],
+          ["2", "2"],
+          ["3", "3"],
+        ]}
+      />
+      <SelectField
+        label="Thalassemia Result"
+        value={form.thalassemia}
+        onChange={(value) => updateField("thalassemia", value)}
+        options={[
+          ["3", "Normal = 3"],
+          ["6", "Fixed defect = 6"],
+          ["7", "Reversible defect = 7"],
+        ]}
+      />
+    </div>
+  );
+}
+
+function BatchAssessmentEntry({
+  fileName,
+  onFileSelected,
+}: {
+  fileName: string | null;
+  onFileSelected: (fileName: string | null) => void;
+}) {
+  const templateHref = `data:text/csv;charset=utf-8,${encodeURIComponent(
+    batchTemplateCsv,
+  )}`;
+
+  return (
+    <section className="mt-6 grid gap-5 lg:grid-cols-[1fr_320px]">
+      <div className="rounded-[22px] border border-slate-200 bg-white p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-base font-bold text-slate-950">
+              Upload Batch CSV
+            </h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              Upload a CSV where each row contains the required model features.
+              Results will be generated row by row for the selected model.
+            </p>
+          </div>
+          <a
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50 focus:outline-none focus:ring-4 focus:ring-cyan-100"
+            href={templateHref}
+            download="cardioxai_batch_prediction_template.csv"
+          >
+            <Download className="h-4 w-4" />
+            Download Template
+          </a>
+        </div>
+
+        <label className="mt-6 flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-[22px] border-2 border-dashed border-cyan-200 bg-cyan-50/50 px-5 py-8 text-center transition hover:border-cyan-300 hover:bg-cyan-50">
+          <Upload className="h-9 w-9 text-cyan-600" />
+          <span className="mt-4 text-sm font-bold text-slate-950">
+            {fileName ?? "Choose a CSV file"}
+          </span>
+          <span className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+            The CSV header must match the feature names exactly.
+          </span>
+          <input
+            className="sr-only"
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) =>
+              onFileSelected(event.target.files?.[0]?.name ?? null)
+            }
+          />
+        </label>
+      </div>
+
+      <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5">
+        <h3 className="text-sm font-bold text-slate-950">
+          Required CSV Columns
+        </h3>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {batchTemplateColumns.map((column) => (
+            <span
+              key={column}
+              className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-200"
+            >
+              {column}
+            </span>
+          ))}
+        </div>
+        <p className="mt-5 text-sm leading-6 text-slate-500">
+          Accepted values follow the UCI Heart Disease feature schema used by
+          the ML models.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function BatchAssessmentResult({
+  selectedModel,
+  selectedRow,
+  onSelectRow,
+  onViewXai,
+}: {
+  selectedModel: AssessmentModel;
+  selectedRow: (typeof batchRows)[number];
+  onSelectRow: (row: (typeof batchRows)[number]) => void;
+  onViewXai: (row: (typeof batchRows)[number]) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <MetricCard icon={FileSpreadsheet} label="Uploaded Rows" value="100" />
+        <MetricCard icon={CheckCircle2} label="Processed" value="96" tone="green" />
+        <MetricCard icon={ShieldCheck} label="High Risk" value="24" tone="red" />
+        <MetricCard icon={Gauge} label="Moderate Risk" value="51" tone="amber" />
+        <MetricCard icon={Brain} label="Model Used" value={selectedModel} tone="purple" />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <Card className="p-6">
+          <CardHeader
+            title="Batch Risk Distribution"
+            subtitle="Processed CSV rows grouped by model risk category."
+          />
+          <div className="mt-6 h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={batchRiskDistribution}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="level" />
+                <YAxis allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="count" radius={[12, 12, 0, 0]}>
+                  {batchRiskDistribution.map((entry) => (
+                    <Cell key={entry.level} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader
+            title="Review Priority"
+            subtitle="Highest-risk successful rows are surfaced first for domain expert review."
+          />
+          <div className="mt-5 space-y-3">
+            {batchRows.slice(0, 4).map((row, index) => (
+              <div
+                key={row.row}
+                className="grid gap-3 rounded-2xl bg-slate-50 p-4 sm:grid-cols-[44px_1fr_auto] sm:items-center"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-sm font-bold text-slate-700 ring-1 ring-slate-200">
+                  {index + 1}
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-950">
+                    Row {row.row} · {row.patient}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500">{row.keySignal}</p>
+                </div>
+                <RiskBadge category={row.category} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <Card className="p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <CardHeader
+              title="Batch Result Table"
+              subtitle="Select a successful row to inspect its individual assessment result."
+            />
+            <div className="flex flex-wrap gap-3">
+              <FilterSelect label="Risk" options={["All", "High", "Moderate", "Low", "Failed"]} />
+              <FilterSelect label="Status" options={["All", "Success", "Failed"]} />
+            </div>
+          </div>
+
+          <div className="mt-6 overflow-hidden rounded-[20px] border border-slate-200">
+            <table className="w-full min-w-[960px] border-collapse bg-white text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  {["Row", "Patient Ref", "Risk Score", "Risk Level", "Status", "Key Signal", "Action"].map((heading) => (
+                    <th key={heading} className="px-5 py-4 font-bold">
+                      {heading}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {batchRows.map((row) => {
+                  const selected = selectedRow.row === row.row;
+
+                  return (
+                    <tr
+                      key={row.row}
+                      className={`transition ${
+                        selected
+                          ? "bg-cyan-50/70"
+                          : row.status === "Success"
+                            ? "cursor-pointer hover:bg-slate-50/70"
+                            : "bg-slate-50/50"
+                      }`}
+                      onClick={() => {
+                        if (row.status === "Success") {
+                          onSelectRow(row);
+                        }
+                      }}
+                    >
+                      <td className="px-5 py-4 font-bold text-slate-950">{row.row}</td>
+                      <td className="px-5 py-4 text-slate-600">{row.patient}</td>
+                      <td className="px-5 py-4 font-semibold text-slate-950">
+                        {row.status === "Failed" ? "--" : row.score.toFixed(2)}
+                      </td>
+                      <td className="px-5 py-4">
+                        <RiskBadge category={row.category} />
+                      </td>
+                      <td className="px-5 py-4">
+                        <Badge tone={row.status === "Success" ? "cyan" : "amber"}>
+                          {row.status}
+                        </Badge>
+                      </td>
+                      <td className="px-5 py-4 text-slate-600">{row.keySignal}</td>
+                      <td className="px-5 py-4">
+                        <Button
+                          variant="secondary"
+                          disabled={row.status === "Failed"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onViewXai(row);
+                          }}
+                        >
+                          Review XAI
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <BatchRowAssessmentDetail
+          selectedModel={selectedModel}
+          row={selectedRow}
+          onViewXai={() => onViewXai(selectedRow)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function BatchRowAssessmentDetail({
+  selectedModel,
+  row,
+  onViewXai,
+}: {
+  selectedModel: AssessmentModel;
+  row: (typeof batchRows)[number];
+  onViewXai: () => void;
+}) {
+  const isHigh = row.category === "High";
+  const isModerate = row.category === "Moderate";
+  const gaugeColor = isHigh ? "#ef4444" : isModerate ? "#f59e0b" : "#10b981";
+  const gaugeDegrees = Math.round(row.score * 360);
+
+  return (
+    <Card className="h-fit p-6">
+      <div className="flex items-start justify-between gap-4">
+        <CardHeader
+          title="Selected Row Assessment"
+          subtitle={`Row ${row.row} from the uploaded batch.`}
+        />
+        <RiskBadge category={row.category} />
+      </div>
+
+      <div className="mt-6 flex flex-col items-center rounded-[22px] bg-slate-50 p-5">
+        <div className="relative flex h-44 w-44 items-center justify-center rounded-full bg-slate-100">
+          <div
+            className="absolute inset-0 rounded-full"
+            style={{
+              background: `conic-gradient(${gaugeColor} 0deg ${gaugeDegrees}deg, #e2e8f0 ${gaugeDegrees}deg 360deg)`,
+            }}
+          />
+          <div className="relative flex h-32 w-32 flex-col items-center justify-center rounded-full bg-white shadow-inner">
+            <span className="text-4xl font-bold text-slate-950">
+              {Math.round(row.score * 100)}%
+            </span>
+            <span className="mt-1 text-xs font-bold text-slate-500">
+              Risk Score
+            </span>
+          </div>
+        </div>
+        <p className="mt-4 text-sm font-bold text-slate-950">{row.patient}</p>
+        <p className="mt-1 text-sm text-slate-500">{selectedModel}</p>
+      </div>
+
+      <div className="mt-5">
+        <h3 className="text-sm font-bold text-slate-950">Key Risk Signals</h3>
+        <div className="mt-3 space-y-2">
+          {row.explanations.map((item) => (
+            <div
+              key={item}
+              className="rounded-2xl bg-white px-4 py-3 text-sm leading-6 text-slate-700 ring-1 ring-slate-200"
+            >
+              {item}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <h3 className="text-sm font-bold text-slate-950">Input Summary</h3>
+        <div className="mt-3 divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white px-4">
+          {row.inputSummary.map(([label, value]) => (
+            <div
+              key={label}
+              className="flex items-center justify-between gap-4 py-3 text-sm"
+            >
+              <span className="text-slate-500">{label}</span>
+              <span className="text-right font-semibold text-slate-900">
+                {value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-6 flex flex-col gap-3">
+        <Button onClick={onViewXai}>
+          <BarChart3 className="h-4 w-4" />
+          Open Row XAI Review
+        </Button>
+        <Button variant="secondary">
+          <Save className="h-4 w-4" />
+          Save Row Assessment
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function AssessmentResult({
   patientSummary,
   selectedModel,
+  modelPerformance,
+  isPerformanceLoading,
+  performanceError,
   onViewXai,
 }: {
   patientSummary: string[][];
   selectedModel: AssessmentModel;
+  modelPerformance: ModelPerformance;
+  isPerformanceLoading: boolean;
+  performanceError: string | null;
   onViewXai: () => void;
 }) {
   return (
@@ -716,6 +1466,13 @@ function AssessmentResult({
           </div>
         </Card>
       </div>
+
+      <ModelPerformancePanel
+        selectedModel={selectedModel}
+        modelPerformance={modelPerformance}
+        isLoading={isPerformanceLoading}
+        error={performanceError}
+      />
 
       <Card className="p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -782,7 +1539,6 @@ function XaiWorkspace({
       {activeXaiTab === "lime" ? <LimePanel /> : null}
       {activeXaiTab === "whatif" ? <WhatIfPanel /> : null}
       {activeXaiTab === "global" ? <GlobalPanel /> : null}
-      {activeXaiTab === "rules" ? <RulesPanel /> : null}
 
       <div className="flex justify-end">
         <Button onClick={onGenerateSummary}>
@@ -791,6 +1547,213 @@ function XaiWorkspace({
         </Button>
       </div>
     </div>
+  );
+}
+
+function BatchXaiWorkspace({
+  selectedModel,
+  selectedRow,
+  onGenerateSummary,
+}: {
+  selectedModel: AssessmentModel;
+  selectedRow: (typeof batchRows)[number];
+  onGenerateSummary: () => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard icon={FileSpreadsheet} label="Batch Rows" value="100" />
+        <MetricCard icon={ShieldCheck} label="High Priority" value="24" tone="red" />
+        <MetricCard icon={Brain} label="Model Used" value={selectedModel} tone="purple" />
+        <MetricCard icon={ClipboardList} label="Review Focus" value={`Row ${selectedRow.row}`} tone="cyan" />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
+        <div className="space-y-6">
+          <Card className="p-6">
+            <CardHeader
+              title="Batch Explanation Overview"
+              subtitle="Aggregated explanation patterns across successful rows."
+            />
+            <div className="mt-6 h-[340px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={batchDriverData} layout="vertical" margin={{ left: 12 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" domain={[0, 0.35]} />
+                  <YAxis dataKey="feature" type="category" width={90} />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#0f172a" radius={[10, 10, 10, 10]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="mt-4 rounded-[20px] bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              The strongest repeated signals in high-risk rows are oldpeak,
+              chest pain type, thalassemia category, colored vessels, and
+              exercise-induced angina.
+            </p>
+          </Card>
+
+          <Card className="p-6">
+            <CardHeader title="High-Risk Pattern Summary" />
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {[
+                "Asymptomatic chest pain appears frequently in high-risk rows.",
+                "Elevated oldpeak values are common among priority cases.",
+                "Thalassemia defect categories are repeated in high-risk outputs.",
+                "Rows with exercise-induced angina are prioritized for review.",
+              ].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-medium leading-6 text-slate-700"
+                >
+                  {item}
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+
+        <Card className="h-fit p-6">
+          <CardHeader
+            title="Row Detail Review"
+            subtitle="Open a high-priority row to inspect patient-level explanation."
+          />
+          <div className="mt-5 rounded-[22px] bg-red-50 p-5 ring-1 ring-red-100">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-red-950">
+                  Row {selectedRow.row} · {selectedRow.patient}
+                </p>
+                <p className="mt-1 text-sm text-red-700">
+                  Selected from the batch result table.
+                </p>
+              </div>
+              <RiskBadge category={selectedRow.category} />
+            </div>
+            <p className="mt-5 text-5xl font-bold text-red-950">
+              {selectedRow.score.toFixed(2)}
+            </p>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {selectedRow.explanations.map((item) => (
+              <div
+                key={item}
+                className="rounded-2xl bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700"
+              >
+                {item}
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={onGenerateSummary}>
+          <Sparkles className="h-4 w-4" />
+          Generate Batch Rationale Summary
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ModelPerformancePanel({
+  selectedModel,
+  modelPerformance,
+  isLoading,
+  error,
+}: {
+  selectedModel: AssessmentModel;
+  modelPerformance: ModelPerformance;
+  isLoading: boolean;
+  error: string | null;
+}) {
+  const confusion = modelPerformance.confusion_matrix;
+  const metrics = [
+    ["Precision", modelPerformance.precision],
+    ["Sensitivity / Recall", modelPerformance.sensitivity_recall],
+    ["Specificity", modelPerformance.specificity],
+    ["F1 Score", modelPerformance.f1_score],
+    ["AUC-ROC Score", modelPerformance.auc_roc],
+  ];
+
+  return (
+    <Card className="p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <CardHeader
+          title="Model Performance"
+          subtitle="Evaluation metrics from the UCI Heart Disease test split."
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="purple">{selectedModel}</Badge>
+          {isLoading ? <Badge tone="cyan">Loading metrics</Badge> : null}
+          {error ? <Badge tone="amber">Sample values</Badge> : null}
+        </div>
+      </div>
+
+      {error ? (
+        <p className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          {error}
+        </p>
+      ) : null}
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        {metrics.map(([label, value]) => (
+          <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+              {label}
+            </p>
+            <p className="mt-2 text-2xl font-bold text-slate-950">
+              {formatMetric(Number(value))}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[0.95fr_1.05fr]">
+        <div className="rounded-[20px] border border-slate-200 p-4">
+          <h3 className="text-sm font-bold text-slate-950">Confusion Matrix</h3>
+          <div className="mt-4 grid grid-cols-[96px_1fr_1fr] overflow-hidden rounded-2xl border border-slate-200 text-center text-sm">
+            <div className="bg-slate-100 p-3 font-bold text-slate-600" />
+            <div className="bg-slate-100 p-3 font-bold text-slate-600">Predicted 0</div>
+            <div className="bg-slate-100 p-3 font-bold text-slate-600">Predicted 1</div>
+            <div className="bg-slate-100 p-3 font-bold text-slate-600">Actual 0</div>
+            <div className="bg-emerald-50 p-4 font-bold text-emerald-700">
+              TN {confusion.true_negative}
+            </div>
+            <div className="bg-red-50 p-4 font-bold text-red-700">
+              FP {confusion.false_positive}
+            </div>
+            <div className="bg-slate-100 p-3 font-bold text-slate-600">Actual 1</div>
+            <div className="bg-red-50 p-4 font-bold text-red-700">
+              FN {confusion.false_negative}
+            </div>
+            <div className="bg-emerald-50 p-4 font-bold text-emerald-700">
+              TP {confusion.true_positive}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[20px] border border-slate-200 p-4">
+          <h3 className="text-sm font-bold text-slate-950">Clinical Readout</h3>
+          <div className="mt-4 space-y-3 text-sm leading-6 text-slate-600">
+            <p>
+              Sensitivity/recall shows how often patients with heart disease are
+              correctly identified.
+            </p>
+            <p>
+              Specificity shows how often patients without heart disease are
+              correctly identified.
+            </p>
+            <p>
+              AUC-ROC summarizes how well the model separates positive and
+              negative cases across thresholds.
+            </p>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -981,37 +1944,6 @@ function GlobalPanel() {
   );
 }
 
-function RulesPanel() {
-  return (
-    <Card className="p-6">
-      <CardHeader title="Rule-Based Explanation" />
-      <div className="mt-6 grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1.15fr]">
-        {[
-          "IF cholesterol > 240",
-          "AND resting blood pressure > 140",
-          "AND age > 50",
-          "THEN model output tends toward high-risk classification",
-        ].map((rule, index) => (
-          <div
-            key={rule}
-            className={`rounded-[20px] p-5 text-sm font-semibold leading-6 ${
-              index === 3
-                ? "bg-red-50 text-red-700 ring-1 ring-red-100"
-                : "bg-slate-50 text-slate-700"
-            }`}
-          >
-            {rule}
-          </div>
-        ))}
-      </div>
-      <p className="mt-5 rounded-[20px] bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-        This rule is a simplified explanation view and may not represent the
-        full model logic.
-      </p>
-    </Card>
-  );
-}
-
 function RationaleSummary() {
   return (
     <div className="space-y-6">
@@ -1081,6 +2013,127 @@ function RationaleSummary() {
             <Button>
               <FileText className="h-4 w-4" />
               Export Report
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function BatchRationaleSummary({
+  selectedModel,
+}: {
+  selectedModel: AssessmentModel;
+}) {
+  return (
+    <div className="space-y-6">
+      <Card className="p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <CardHeader
+            title="Batch Rationale Summary"
+            subtitle="Triage-oriented interpretation for the uploaded CSV assessment."
+          />
+          <Badge tone="purple">{selectedModel}</Badge>
+        </div>
+        <p className="mt-5 max-w-5xl text-lg leading-9 text-slate-700">
+          The uploaded batch contains 100 records. Ninety-six rows were
+          processed successfully and four rows require data correction. The
+          review queue should prioritize the 24 high-risk rows, especially rows
+          7, 18, and 42, because their predicted risk scores are highest and
+          their explanation summaries repeatedly identify oldpeak, chest pain
+          type, thalassemia category, colored vessels, and exercise-induced
+          angina as major risk signals.
+        </p>
+      </Card>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <ContributorCard
+          title="Risk Stratification"
+          tone="red"
+          rows={[
+            ["High risk rows", "24"],
+            ["Moderate risk rows", "51"],
+            ["Low risk rows", "21"],
+            ["Failed rows", "4"],
+          ]}
+        />
+        <ContributorCard
+          title="Primary Risk Signals"
+          tone="red"
+          rows={[
+            ["oldpeak", "Repeated"],
+            ["cp", "Repeated"],
+            ["thal", "Repeated"],
+            ["ca", "Repeated"],
+          ]}
+        />
+        <ContributorCard
+          title="Validation Notes"
+          tone="green"
+          rows={[
+            ["Processed", "96"],
+            ["Needs correction", "4"],
+            ["Schema", "13 features"],
+            ["Review mode", "Triage"],
+          ]}
+        />
+      </div>
+
+      <Card className="p-6">
+        <CardHeader
+          title="Priority Review List"
+          subtitle="Rows recommended for first-pass domain expert review."
+        />
+        <div className="mt-6 overflow-hidden rounded-[20px] border border-slate-200">
+          <table className="w-full min-w-[820px] border-collapse bg-white text-left text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                {["Priority", "Row", "Risk Score", "Risk Level", "Rationale Focus"].map((heading) => (
+                  <th key={heading} className="px-5 py-4 font-bold">
+                    {heading}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {batchRows.slice(0, 4).map((row, index) => (
+                <tr key={row.row}>
+                  <td className="px-5 py-4 font-bold text-slate-950">{index + 1}</td>
+                  <td className="px-5 py-4 text-slate-600">Row {row.row}</td>
+                  <td className="px-5 py-4 font-semibold text-slate-950">
+                    {row.score.toFixed(2)}
+                  </td>
+                  <td className="px-5 py-4">
+                    <RiskBadge category={row.category} />
+                  </td>
+                  <td className="px-5 py-4 text-slate-600">{row.keySignal}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-purple-50 text-purple-600">
+              <Brain className="h-6 w-6" />
+            </div>
+            <p className="max-w-3xl text-sm leading-6 text-slate-600">
+              Batch rationale summarizes triage patterns and does not replace
+              row-level clinical review or professional judgement.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button variant="secondary">
+              <Sparkles className="h-4 w-4" />
+              Regenerate Summary
+            </Button>
+            <Button>
+              <FileText className="h-4 w-4" />
+              Export Batch Report
             </Button>
           </div>
         </div>
@@ -1167,6 +2220,10 @@ function MetricGrid({ selectedModel = "Random Forest" }: { selectedModel?: Asses
   );
 }
 
+function formatMetric(value: number) {
+  return value.toFixed(2);
+}
+
 function MetricCard({
   icon: Icon,
   label,
@@ -1176,12 +2233,14 @@ function MetricCard({
   icon: typeof ClipboardList;
   label: string;
   value: string;
-  tone?: "cyan" | "purple" | "red";
+  tone?: "cyan" | "purple" | "red" | "amber" | "green";
 }) {
   const colors = {
     cyan: "bg-cyan-50 text-cyan-600",
     purple: "bg-purple-50 text-purple-600",
     red: "bg-red-50 text-red-600",
+    amber: "bg-amber-50 text-amber-600",
+    green: "bg-emerald-50 text-emerald-600",
   };
 
   return (
@@ -1409,6 +2468,10 @@ function RiskBadge({ category }: { category: string }) {
 
   if (category === "Moderate") {
     return <Badge tone="amber">Moderate</Badge>;
+  }
+
+  if (category === "Failed") {
+    return <Badge tone="slate">Failed</Badge>;
   }
 
   return <Badge tone="green">Low</Badge>;
