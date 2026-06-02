@@ -8,7 +8,7 @@ import { Card, CardHeader } from '../../../components/ui/Card';
 export function MetricGrid({
   selectedModel = "Random Forest",
   prediction,
-  patientReference = "PT-0001",
+  patientReference = "Auto-generated",
 }: {
   selectedModel?: AssessmentModel;
   prediction?: PredictionResult | null;
@@ -79,6 +79,8 @@ export function TextField({
   type = "text",
   unit,
   step,
+  placeholder,
+  helperText,
 }: {
   label: string;
   value: string;
@@ -86,6 +88,8 @@ export function TextField({
   type?: string;
   unit?: string;
   step?: string;
+  placeholder?: string;
+  helperText?: string;
 }) {
   return (
     <label className="block">
@@ -95,6 +99,7 @@ export function TextField({
           className="min-h-12 w-full bg-transparent px-4 text-sm font-medium text-slate-900 outline-none"
           type={type}
           step={step}
+          placeholder={placeholder}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -104,6 +109,11 @@ export function TextField({
           </span>
         ) : null}
       </div>
+      {helperText ? (
+        <p className="mt-2 text-xs font-medium leading-5 text-slate-500">
+          {helperText}
+        </p>
+      ) : null}
     </label>
   );
 }

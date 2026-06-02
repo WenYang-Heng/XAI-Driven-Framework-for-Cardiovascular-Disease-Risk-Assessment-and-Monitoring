@@ -15,7 +15,7 @@ class PatientSummary(BaseModel):
 
 class PredictionRequest(BaseModel):
     user_id: str | None = None
-    patient_reference_id: str = Field("PT-0001", min_length=1, max_length=64)
+    patient_reference_id: str | None = Field(None, max_length=64)
     assessment_date: str | None = None
     visit_label: str | None = Field(None, max_length=120)
     model_name: ModelName = Field("logistic_regression")

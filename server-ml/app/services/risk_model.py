@@ -73,7 +73,7 @@ FEATURE_LABELS = {
     "exang": "Exercise-Induced Angina",
     "oldpeak": "ST Depression",
     "slope": "ST Segment Slope",
-    "ca": "Number of major vessels colored by fluoroscopy",
+    "ca": "Number of Major Vessels Coloured by Fluoroscopy",
     "thal": "Thalassemia",
 }
 
@@ -238,7 +238,7 @@ def _build_explanation(request: RiskPredictionRequest) -> list[str]:
     if request.oldpeak >= 1:
         explanation.append("ST depression during exercise contributed to the risk estimate.")
     if request.ca > 0:
-        explanation.append("More colored major vessels contributed to the risk estimate.")
+        explanation.append("More coloured major vessels contributed to the risk estimate.")
     if request.thal in (6, 7):
         explanation.append("Thalassemia defect category contributed to the risk estimate.")
     if request.trestbps >= 140:

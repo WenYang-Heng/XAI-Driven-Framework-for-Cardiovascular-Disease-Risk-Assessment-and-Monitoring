@@ -19,7 +19,7 @@ class RiskPredictionRequest(BaseModel):
     exang: Literal[0, 1] = Field(..., description="Exercise induced angina", examples=[1])
     oldpeak: float = Field(..., ge=0, description="ST depression induced by exercise relative to rest", examples=[1.4])
     slope: Literal[1, 2, 3] = Field(..., description="Slope of peak exercise ST segment", examples=[2])
-    ca: int = Field(..., ge=0, le=3, description="Number of major vessels colored by fluoroscopy", examples=[0])
+    ca: int = Field(..., ge=0, le=3, description="Number of Major Vessels Coloured by Fluoroscopy", examples=[0])
     thal: Literal[3, 6, 7] = Field(..., description="3 = normal; 6 = fixed defect; 7 = reversible defect", examples=[7])
 
 

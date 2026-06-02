@@ -8,7 +8,7 @@ import type {
 } from "./types";
 
 export const defaultForm: PatientForm = {
-  patientId: "PT-0001",
+  patientId: "",
   age: "54",
   sex: "1",
   chestPain: "4",
@@ -137,7 +137,7 @@ export const featureLabels: Record<string, string> = {
   exang: "Exercise-Induced Angina",
   oldpeak: "ST Depression",
   slope: "ST Segment Slope",
-  ca: "Number of major vessels colored by fluoroscopy",
+  ca: "Number of Major Vessels Coloured by Fluoroscopy",
   thal: "Thalassemia",
 };
 
@@ -164,7 +164,7 @@ export const csvFeatureGuide = [
   ["exang", "Exercise-Induced Angina", "0 = No, 1 = Yes"],
   ["oldpeak", "ST Depression", "ST depression value"],
   ["slope", "ST Segment Slope", "1 = Upsloping, 2 = Flat, 3 = Downsloping"],
-  ["ca", "Number of major vessels colored by fluoroscopy", "0-3"],
+  ["ca", "Number of Major Vessels Coloured by Fluoroscopy", "0-3"],
   ["thal", "Thalassemia", "3 = Normal, 6 = Fixed defect, 7 = Reversible defect"],
 ];
 
@@ -234,11 +234,19 @@ export const fallbackModelPerformance: Record<AssessmentModel, ModelPerformance>
 };
 
 export const globalImportance = [
-  { feature: "age", importance: 0.28 },
-  { feature: "cholesterol", importance: 0.34 },
-  { feature: "resting BP", importance: 0.25 },
-  { feature: "thalach", importance: 0.19 },
-  { feature: "oldpeak", importance: 0.22 },
+  { feature: "cp", importance: 0.34 },
+  { feature: "ca", importance: 0.31 },
+  { feature: "oldpeak", importance: 0.28 },
+  { feature: "thalach", importance: 0.25 },
+  { feature: "thal", importance: 0.23 },
+  { feature: "age", importance: 0.21 },
+  { feature: "exang", importance: 0.18 },
+  { feature: "chol", importance: 0.16 },
+  { feature: "trestbps", importance: 0.14 },
+  { feature: "slope", importance: 0.12 },
+  { feature: "restecg", importance: 0.08 },
+  { feature: "sex", importance: 0.06 },
+  { feature: "fbs", importance: 0.04 },
 ];
 
 export const pdpData = [

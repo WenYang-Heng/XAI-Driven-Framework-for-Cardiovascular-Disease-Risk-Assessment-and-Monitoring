@@ -1,4 +1,5 @@
 import os
+import re
 from collections import Counter
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -161,7 +162,34 @@ def _assessment_date(value: str | None) -> str:
 
 def _normalise_patient_reference(value: str | None, fallback: str | None = None) -> str:
     cleaned = (value or fallback or "").strip()
-    return cleaned or f"CASE-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+    return cleaned or _next_patient_reference()
+
+
+def _next_patient_reference() -> str:
+    year = datetime.now(UTC).year
+    prefix = f"CASE-{year}-"
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+    highest = 0
+
+    if database_enabled():
+        rows = _query_database(
+            """
+            select patient_reference_id
+            from public.patient_cases
+            where patient_reference_id like %(prefix)s
+            """,
+            {"prefix": f"{prefix}%"},
+        )
+        references = [row["patient_reference_id"] for row in rows]
+    else:
+        references = [case["patient_reference_id"] for case in _patient_cases]
+
+    for reference in references:
+        match = pattern.match(reference)
+        if match:
+            highest = max(highest, int(match.group(1)))
+
+    return f"{prefix}{highest + 1:04d}"
 
 
 def _model_id(model_name: str) -> str | None:
@@ -226,7 +254,7 @@ async def get_or_create_patient_case(
     patient_reference_id: str | None,
     user_id: str | None,
 ) -> dict[str, Any]:
-    reference = _normalise_patient_reference(patient_reference_id, "PT-0001")
+    reference = _normalise_patient_reference(patient_reference_id)
 
     if database_enabled():
         rows = _query_database(
@@ -300,13 +328,14 @@ async def save_prediction(
     request_payload: dict[str, Any],
     prediction: dict[str, Any],
     entry_type: str = "single",
-) -> tuple[str, str, str | None]:
+) -> tuple[str, str, str | None, str | None]:
     request_id = str(uuid4())
     result_id = str(uuid4())
     user_id = request_payload.get("user_id")
     await ensure_user_profile(user_id)
     patient_case = await get_or_create_patient_case(request_payload.get("patient_reference_id"), user_id)
     patient_case_id = patient_case.get("patient_case_id")
+    patient_reference_id = patient_case.get("patient_reference_id")
     model_id = _model_id(request_payload["model_name"])
     input_features = _feature_payload(request_payload)
 
@@ -349,7 +378,7 @@ async def save_prediction(
     await save_xai_explanations(result_id, prediction.get("xai"), request_payload)
     await log_activity(user_id, "CREATE_PREDICTION_REQUEST", "prediction_requests", request_id)
     await log_activity(user_id, "GENERATE_PREDICTION_RESULT", "prediction_results", result_id)
-    return request_id, result_id, patient_case_id
+    return request_id, result_id, patient_case_id, patient_reference_id
 
 
 async def save_xai_explanations(result_id: str, xai: dict[str, Any] | None, request_payload: dict[str, Any]) -> None:

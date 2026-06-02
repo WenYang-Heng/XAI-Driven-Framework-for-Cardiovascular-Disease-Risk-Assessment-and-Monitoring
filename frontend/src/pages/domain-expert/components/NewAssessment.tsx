@@ -281,6 +281,8 @@ export function SinglePatientEntry({
         label="Patient Reference ID"
         value={form.patientId}
         onChange={(value) => updateField("patientId", value)}
+        placeholder="Leave blank for new patient"
+        helperText="Ignore this field for a new patient reference ID. The system will generate the next case number automatically."
       />
       <TextField
         label="Age"
@@ -374,7 +376,7 @@ export function SinglePatientEntry({
         ]}
       />
       <SelectField
-        label="Number of major vessels colored by fluoroscopy"
+        label="Number of Major Vessels Coloured by Fluoroscopy"
         value={form.vessels}
         onChange={(value) => updateField("vessels", value)}
         options={[
@@ -420,9 +422,9 @@ export function BatchAssessmentEntry({
   )}`;
 
   return (
-    <section className="mt-6 grid gap-5 lg:grid-cols-[1fr_360px]">
+    <section className="mt-6 grid gap-5 lg:grid-cols-[minmax(320px,0.82fr)_minmax(520px,1.18fr)]">
       <div className="rounded-[22px] border border-slate-200 bg-white p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-4">
           <div>
             <h3 className="text-base font-bold text-slate-950">
               Upload Batch CSV
@@ -442,7 +444,7 @@ export function BatchAssessmentEntry({
           </a>
         </div>
 
-        <label className="mt-6 flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-[22px] border-2 border-dashed border-cyan-200 bg-cyan-50/50 px-5 py-8 text-center transition hover:border-cyan-300 hover:bg-cyan-50">
+        <label className="mt-6 flex min-h-[150px] cursor-pointer flex-col items-center justify-center rounded-[22px] border-2 border-dashed border-cyan-200 bg-cyan-50/50 px-5 py-7 text-center transition hover:border-cyan-300 hover:bg-cyan-50">
           <Upload className="h-9 w-9 text-cyan-600" />
           <span className="mt-4 text-sm font-bold text-slate-950">
             {fileName ?? "Choose a CSV file"}
@@ -522,8 +524,13 @@ export function BatchAssessmentEntry({
         <h3 className="text-sm font-bold text-slate-950">
           CSV Feature Guide
         </h3>
-        <div className="mt-4 max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-white">
-          <table className="w-full min-w-[520px] border-collapse text-left text-xs">
+        <div className="mt-4 max-h-[620px] overflow-auto rounded-2xl border border-slate-200 bg-white">
+          <table className="w-full min-w-[760px] table-fixed border-collapse text-left text-xs">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[32%]" />
+              <col className="w-[46%]" />
+            </colgroup>
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 {["Column", "Field", "Accepted values"].map((heading) => (
@@ -536,9 +543,9 @@ export function BatchAssessmentEntry({
             <tbody className="divide-y divide-slate-100">
               {csvFeatureGuide.map(([column, field, acceptedValues]) => (
                 <tr key={column}>
-                  <td className="px-3 py-3 font-bold text-slate-900">{column}</td>
+                  <td className="break-words px-3 py-3 font-bold text-slate-900">{column}</td>
                   <td className="px-3 py-3 text-slate-600">{field}</td>
-                  <td className="px-3 py-3 text-slate-600">{acceptedValues}</td>
+                  <td className="px-3 py-3 leading-5 text-slate-600">{acceptedValues}</td>
                 </tr>
               ))}
             </tbody>

@@ -25,7 +25,7 @@ async def create_prediction(request: PredictionRequest) -> dict:
 
     try:
         prediction = await ml_client.predict(ml_payload)
-        request_id, result_id, patient_case_id = await storage.save_prediction(request_payload, prediction.model_dump())
+        request_id, result_id, patient_case_id, patient_reference_id = await storage.save_prediction(request_payload, prediction.model_dump())
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"server-ml request failed: {error}") from error
 
@@ -34,7 +34,7 @@ async def create_prediction(request: PredictionRequest) -> dict:
         "request_id": request_id,
         "result_id": result_id,
         "patient_case_id": patient_case_id,
-        "patient_reference_id": request.patient_reference_id,
+        "patient_reference_id": patient_reference_id,
         "prediction": prediction.model_dump(),
     }
 

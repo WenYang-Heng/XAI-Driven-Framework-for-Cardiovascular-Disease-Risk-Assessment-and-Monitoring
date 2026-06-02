@@ -127,11 +127,12 @@ async def confirm_batch_upload(upload_id: str, request: BatchConfirmRequest) -> 
                 "xai": result.xai.model_dump() if result.xai else None,
                 "model_version": result.model_version or f"uci-heart-{request.model_name}",
             }
-            request_id, result_id, patient_case_id = await storage.save_prediction(
+            request_id, result_id, patient_case_id, saved_patient_reference_id = await storage.save_prediction(
                 request_payload,
                 prediction_payload,
                 entry_type="batch",
             )
+            patient_reference_id = saved_patient_reference_id or patient_reference_id
 
         await storage.save_batch_row(
             upload_id=upload_id,

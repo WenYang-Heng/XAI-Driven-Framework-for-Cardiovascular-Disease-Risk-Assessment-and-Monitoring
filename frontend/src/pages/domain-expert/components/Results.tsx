@@ -369,7 +369,7 @@ export function AssessmentResult({
       <MetricGrid
         selectedModel={selectedModel}
         prediction={displayPrediction}
-        patientReference={patientSummary[0]?.[1] ?? "PT-0001"}
+        patientReference={displayPrediction.patient_reference_id ?? patientSummary.find(([label]) => label === "Patient Reference ID")?.[1] ?? "Auto-generated"}
       />
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">

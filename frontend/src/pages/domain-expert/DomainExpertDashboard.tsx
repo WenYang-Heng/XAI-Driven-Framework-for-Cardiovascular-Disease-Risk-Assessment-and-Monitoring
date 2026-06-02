@@ -79,6 +79,7 @@ export function DomainExpertDashboard({
 
   const patientSummary = useMemo(
     () => [
+      ["Patient Reference ID", form.patientId],
       ["Age", form.age],
       ["Sex", form.sex === "1" ? "Male" : "Female"],
       ["Chest Pain Type", "Asymptomatic"],
@@ -87,7 +88,7 @@ export function DomainExpertDashboard({
       ["Max Heart Rate", form.maxHeartRate],
       ["Exercise-Induced Angina", form.exerciseAngina === "1" ? "Yes" : "No"],
       ["Oldpeak", form.oldpeak],
-      ["Number of major vessels colored by fluoroscopy", form.vessels],
+      ["Number of Major Vessels Coloured by Fluoroscopy", form.vessels],
       ["Thalassemia", "Normal"],
     ],
     [form],

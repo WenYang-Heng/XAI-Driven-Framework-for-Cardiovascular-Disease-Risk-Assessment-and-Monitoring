@@ -365,49 +365,79 @@ export function WhatIfPanel() {
 }
 
 export function GlobalPanel() {
+  const importanceData = globalImportance.map((item) => ({
+    ...item,
+    featureLabel: featureLabels[item.feature] ?? item.feature,
+  }));
+
   return (
-    <div className="grid gap-6 xl:grid-cols-3">
+    <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
       <ChartCard title="Global Feature Importance">
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={globalImportance}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="feature" tick={{ fontSize: 12 }} />
-            <YAxis />
+        <ResponsiveContainer width="100%" height={520}>
+          <BarChart data={importanceData} layout="vertical" margin={{ left: 24, right: 20 }}>
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+            <XAxis type="number" domain={[0, 0.4]} />
+            <YAxis
+              dataKey="featureLabel"
+              type="category"
+              width={220}
+              interval={0}
+              tick={{ fontSize: 12 }}
+            />
             <Tooltip />
             <Bar dataKey="importance" fill="#06b6d4" radius={[12, 12, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
+        <p className="mt-4 rounded-[20px] bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+          Global importance summarizes which variables tend to influence the model across the training data. It is not patient-specific; use SHAP and LIME tabs for this individual assessment.
+        </p>
       </ChartCard>
-      <ChartCard title="PDP Preview for Cholesterol">
-        <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={pdpData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="cholesterol" />
-            <YAxis />
-            <Tooltip />
-            <Line
-              type="monotone"
-              dataKey="risk"
-              stroke="#7c3aed"
-              strokeWidth={3}
-              dot={{ r: 4 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </ChartCard>
-      <ChartCard title="ICE Preview">
-        <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={iceData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="cholesterol" />
-            <YAxis />
-            <Tooltip />
-            <Line type="monotone" dataKey="p1" stroke="#06b6d4" strokeWidth={2} />
-            <Line type="monotone" dataKey="p2" stroke="#8b5cf6" strokeWidth={2} />
-            <Line type="monotone" dataKey="p3" stroke="#f97316" strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
-      </ChartCard>
+      <div className="grid gap-6">
+        <ChartCard title="PDP Preview for Serum Cholesterol">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={pdpData} margin={{ left: 4, right: 16 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="cholesterol"
+                label={{ value: "Serum Cholesterol (mg/dL)", position: "insideBottom", offset: -4 }}
+                tick={{ fontSize: 12 }}
+              />
+              <YAxis domain={[0, 1]} tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} />
+              <Tooltip formatter={(value) => [`${Math.round(Number(value) * 100)}%`, "Predicted risk"]} />
+              <Line
+                type="monotone"
+                dataKey="risk"
+                stroke="#7c3aed"
+                strokeWidth={3}
+                dot={{ r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="mt-4 rounded-[20px] bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+            PDP shows the average model response as cholesterol changes while other features are averaged over the dataset.
+          </p>
+        </ChartCard>
+        <ChartCard title="ICE Preview for Serum Cholesterol">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={iceData} margin={{ left: 4, right: 16 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="cholesterol"
+                label={{ value: "Serum Cholesterol (mg/dL)", position: "insideBottom", offset: -4 }}
+                tick={{ fontSize: 12 }}
+              />
+              <YAxis domain={[0, 1]} tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} />
+              <Tooltip formatter={(value, name) => [`${Math.round(Number(value) * 100)}%`, `Case ${String(name).replace("p", "")}`]} />
+              <Line type="monotone" dataKey="p1" stroke="#06b6d4" strokeWidth={2} />
+              <Line type="monotone" dataKey="p2" stroke="#8b5cf6" strokeWidth={2} />
+              <Line type="monotone" dataKey="p3" stroke="#f97316" strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="mt-4 rounded-[20px] bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+            ICE shows example patient-level response curves. Different slopes indicate that the same cholesterol change may affect cases differently.
+          </p>
+        </ChartCard>
+      </div>
     </div>
   );
 }
