@@ -52,8 +52,12 @@ create table if not exists public.prediction_results (
     predicted_class integer not null check (predicted_class in (0, 1)),
     risk_level text not null check (risk_level in ('low', 'moderate', 'high')),
     explanation jsonb,
+    xai jsonb,
     created_at timestamp with time zone default now()
 );
+
+alter table public.prediction_results
+    add column if not exists xai jsonb;
 
 create table if not exists public.uploaded_files (
     upload_id uuid primary key default gen_random_uuid(),

@@ -23,6 +23,27 @@ class RiskPredictionRequest(BaseModel):
     thal: Literal[3, 6, 7] = Field(..., description="3 = normal; 6 = fixed defect; 7 = reversible defect", examples=[7])
 
 
+class FeatureContribution(BaseModel):
+    feature: str
+    value: float
+
+
+class ShapExplanation(BaseModel):
+    base_value: float
+    final_value: float
+    contributions: list[FeatureContribution]
+
+
+class LimeExplanation(BaseModel):
+    contributions: list[FeatureContribution]
+
+
+class XaiExplanation(BaseModel):
+    shap: ShapExplanation
+    lime: LimeExplanation
+    summary: list[str]
+
+
 class RiskPredictionResponse(BaseModel):
     model_name: ModelName
     risk_score: float = Field(..., ge=0, le=1, examples=[0.68])
@@ -30,6 +51,7 @@ class RiskPredictionResponse(BaseModel):
     risk_level: Literal["low", "moderate", "high"] = Field(..., examples=["high"])
     explanation: list[str] = Field(..., examples=[["Exercise induced angina increased the risk estimate."]])
     model_version: str = Field(..., examples=["uci-heart-logistic-regression"])
+    xai: XaiExplanation
 
 
 class BatchPredictionRowResult(BaseModel):
@@ -38,6 +60,7 @@ class BatchPredictionRowResult(BaseModel):
     predicted_class: int | None = None
     risk_level: str | None = None
     explanation: list[str] | None = None
+    xai: XaiExplanation | None = None
     model_version: str | None = None
     status: Literal["success", "failed"]
     error_message: str | None = None

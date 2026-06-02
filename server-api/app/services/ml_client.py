@@ -42,3 +42,18 @@ async def predict_batch(file: UploadFile, model_name: str) -> BatchPredictionRes
         response = await client.post(f"{SERVER_ML_BASE_URL}/predict/batch", data=data, files=files)
         response.raise_for_status()
         return BatchPredictionResponse(**response.json())
+
+
+async def predict_batch_bytes(
+    content: bytes,
+    file_name: str,
+    content_type: str,
+    model_name: str,
+) -> BatchPredictionResponse:
+    files = {"file": (file_name or "upload.csv", content, content_type or "application/octet-stream")}
+    data = {"model_name": model_name}
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.post(f"{SERVER_ML_BASE_URL}/predict/batch", data=data, files=files)
+        response.raise_for_status()
+        return BatchPredictionResponse(**response.json())

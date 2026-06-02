@@ -9,10 +9,14 @@ from app.schemas import (
     BatchPredictionRowResult,
     BatchPredictionSummary,
     DatasetSummary,
+    FeatureContribution,
+    LimeExplanation,
     ModelInfo,
     ModelListResponse,
     ModelMetricsResponse,
     RiskPredictionResponse,
+    ShapExplanation,
+    XaiExplanation,
 )
 
 
@@ -82,6 +86,7 @@ def test_predict_returns_risk_score(monkeypatch):
             risk_level="moderate",
             explanation=["Rule-based explanation."],
             model_version="uci-heart-logistic_regression",
+            xai=_xai_payload(0.68),
         ),
     )
 
@@ -90,6 +95,9 @@ def test_predict_returns_risk_score(monkeypatch):
     assert response.status_code == 200
     assert response.json()["risk_score"] == 0.68
     assert response.json()["predicted_class"] == 1
+    assert len(response.json()["xai"]["shap"]["contributions"]) == 13
+    assert len(response.json()["xai"]["lime"]["contributions"]) == 13
+    assert response.json()["xai"]["summary"]
 
 
 def test_model_metrics_returns_metrics(monkeypatch):
@@ -147,6 +155,7 @@ def test_batch_handles_valid_csv(monkeypatch):
                     predicted_class=1,
                     risk_level="high",
                     explanation=["Rule-based explanation."],
+                    xai=_xai_payload(0.72),
                     model_version="uci-heart-random_forest",
                     status="success",
                 )
@@ -162,6 +171,7 @@ def test_batch_handles_valid_csv(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["summary"]["successful_rows"] == 1
+    assert len(response.json()["results"][0]["xai"]["shap"]["contributions"]) == 13
 
 
 def test_batch_returns_failed_row_for_invalid_values(monkeypatch):
@@ -217,3 +227,29 @@ def _csv_bytes(age: int = 55) -> bytes:
     buffer = io.StringIO()
     data.to_csv(buffer, index=False)
     return buffer.getvalue().encode()
+
+
+def _xai_payload(final_value: float) -> XaiExplanation:
+    contributions = [
+        FeatureContribution(feature=feature, value=0.0)
+        for feature in [
+            "age",
+            "sex",
+            "cp",
+            "trestbps",
+            "chol",
+            "fbs",
+            "restecg",
+            "thalach",
+            "exang",
+            "oldpeak",
+            "slope",
+            "ca",
+            "thal",
+        ]
+    ]
+    return XaiExplanation(
+        shap=ShapExplanation(base_value=0.5, final_value=final_value, contributions=contributions),
+        lime=LimeExplanation(contributions=contributions),
+        summary=["Rule-based XAI summary."],
+    )

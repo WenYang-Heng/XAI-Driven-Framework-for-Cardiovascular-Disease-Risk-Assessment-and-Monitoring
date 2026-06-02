@@ -54,6 +54,7 @@ def predict_batch(df: Any, model_name: ModelName) -> BatchPredictionResponse:
                     predicted_class=prediction.predicted_class,
                     risk_level=prediction.risk_level,
                     explanation=prediction.explanation,
+                    xai=prediction.xai,
                     model_version=prediction.model_version,
                     status="success",
                 )

@@ -3,8 +3,11 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 ucimlrepo
 pandas==2.2.3
+numpy<2
 scikit-learn==1.6.0
 xgboost==2.1.4
+shap==0.46.0
+lime==0.2.0.1
 python-multipart==0.0.20
 openpyxl==3.1.5
 pytest==8.3.4
