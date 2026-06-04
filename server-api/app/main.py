@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import admin, batch, health, history, models, patient_assessments, patients, predictions, profile
+from app.routers import action_plans, admin, batch, health, history, models, patient_assessments, patients, predictions, profile
 
 from dotenv import load_dotenv
 
@@ -24,6 +24,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(action_plans.router)
 app.include_router(models.router)
 app.include_router(predictions.router)
 app.include_router(batch.router)

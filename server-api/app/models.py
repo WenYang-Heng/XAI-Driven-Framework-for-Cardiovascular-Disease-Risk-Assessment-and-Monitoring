@@ -262,6 +262,41 @@ class PatientAssessmentResponse(BaseModel):
     prediction: PatientAssessmentPrediction
 
 
+ActionPriority = Literal["low", "medium", "high"]
+ActionDifficulty = Literal["easy", "moderate", "hard"]
+
+
+class ActionPlanGenerateRequest(BaseModel):
+    assessment_id: str
+    user_id: str
+    regenerate: bool = False
+
+
+class ActionPlanItemPayload(BaseModel):
+    title: str
+    priority: ActionPriority
+    factor: str
+    difficulty: ActionDifficulty
+    reason: str
+    timeframe: str
+    specific_examples: list[str]
+    next_step: str
+    barrier_plan: str
+    measure: str
+    status: str = "not_started"
+
+
+class ActionPlanPayload(BaseModel):
+    title: str
+    summary: str
+    items: list[ActionPlanItemPayload] = Field(..., min_length=2, max_length=5)
+    disclaimer: str
+
+
+class ActionPlanGenerateResponse(BaseModel):
+    action_plan: dict
+
+
 PREDICTION_FEATURES = [
     "age",
     "sex",

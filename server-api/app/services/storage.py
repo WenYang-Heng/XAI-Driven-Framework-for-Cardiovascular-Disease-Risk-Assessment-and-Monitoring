@@ -25,6 +25,8 @@ _feedback: list[dict[str, Any]] = []
 _xai_explanations: list[dict[str, Any]] = []
 _assessments: list[dict[str, Any]] = []
 _assessment_inputs: list[dict[str, Any]] = []
+_action_plans: list[dict[str, Any]] = []
+_action_items: list[dict[str, Any]] = []
 _upload_files: dict[str, dict[str, Any]] = {}
 _profiles: list[dict[str, Any]] = []
 
@@ -96,7 +98,7 @@ def _delete_database(table: str, key_name: str, key_value: str) -> None:
 
 def _database_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: Json(value) if isinstance(value, (dict, list)) else value
+        key: value if key == "specific_examples" else Json(value) if isinstance(value, (dict, list)) else value
         for key, value in payload.items()
     }
 
@@ -615,6 +617,160 @@ def patient_assessment_history(user_id: str) -> list[dict[str, Any]]:
         )
         items.append({**assessment, **assessment_input})
     return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)
+
+
+def get_patient_assessment_with_input(assessment_id: str, user_id: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if database_enabled():
+        assessment_rows = _query_database(
+            """
+            select *
+            from public.assessments
+            where assessment_id = %(assessment_id)s
+              and user_id = %(user_id)s
+            limit 1
+            """,
+            {"assessment_id": assessment_id, "user_id": user_id},
+        )
+        if not assessment_rows:
+            return None
+
+        input_rows = _query_database(
+            """
+            select *
+            from public.assessments_input
+            where assessment_id = %(assessment_id)s
+            limit 1
+            """,
+            {"assessment_id": assessment_id},
+        )
+        return assessment_rows[0], input_rows[0] if input_rows else {}
+
+    assessment = next(
+        (
+            item
+            for item in _assessments
+            if item.get("assessment_id") == assessment_id and item.get("user_id") == user_id
+        ),
+        None,
+    )
+    if not assessment:
+        return None
+    assessment_input = next(
+        (item for item in _assessment_inputs if item.get("assessment_id") == assessment_id),
+        {},
+    )
+    return assessment, assessment_input
+
+
+def get_action_plan_for_assessment(assessment_id: str, user_id: str) -> dict[str, Any] | None:
+    if database_enabled():
+        rows = _query_database(
+            """
+            select *
+            from public.action_plans
+            where assessment_id = %(assessment_id)s
+              and user_id = %(user_id)s
+            order by created_at desc
+            limit 1
+            """,
+            {"assessment_id": assessment_id, "user_id": user_id},
+        )
+        if not rows:
+            return None
+        return _with_action_items(rows[0])
+
+    plan = next(
+        (
+            item
+            for item in sorted(_action_plans, key=lambda row: row.get("created_at", ""), reverse=True)
+            if item.get("assessment_id") == assessment_id and item.get("user_id") == user_id
+        ),
+        None,
+    )
+    return _with_action_items(plan) if plan else None
+
+
+async def save_action_plan(
+    user_id: str,
+    assessment: dict[str, Any],
+    plan_payload: dict[str, Any],
+    generated_by: str,
+    ai_model: str | None,
+    generation_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    await ensure_user_profile(user_id, default_role="PATIENT")
+
+    plan_record = {
+        "action_plan_id": str(uuid4()),
+        "user_id": user_id,
+        "assessment_id": assessment.get("assessment_id"),
+        "title": plan_payload["title"],
+        "summary": plan_payload["summary"],
+        "risk_score": assessment.get("risk_score"),
+        "risk_category": assessment.get("risk_category"),
+        "generated_by": generated_by,
+        "ai_model": ai_model,
+        "generation_metadata": generation_metadata,
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+    _action_plans.append(plan_record)
+    inserted_plan = await _insert(
+        "action_plans",
+        {key: value for key, value in plan_record.items() if key != "action_plan_id"},
+    )
+    action_plan_id = inserted_plan.get("action_plan_id", plan_record["action_plan_id"])
+    plan_record = {**plan_record, **inserted_plan, "action_plan_id": action_plan_id}
+
+    saved_items = []
+    for item in plan_payload["items"]:
+        item_record = {
+            "action_item_id": str(uuid4()),
+            "action_plan_id": action_plan_id,
+            "title": item["title"],
+            "priority": item["priority"],
+            "factor": item["factor"],
+            "difficulty": item["difficulty"],
+            "reason": item["reason"],
+            "timeframe": item["timeframe"],
+            "specific_examples": item.get("specific_examples", []),
+            "next_step": item["next_step"],
+            "barrier_plan": item["barrier_plan"],
+            "measure": item["measure"],
+            "status": item.get("status", "not_started"),
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        _action_items.append(item_record)
+        inserted_item = await _insert(
+            "action_items",
+            {key: value for key, value in item_record.items() if key != "action_item_id"},
+        )
+        saved_items.append({**item_record, **inserted_item})
+
+    await log_activity(user_id, "GENERATE_ACTION_PLAN", "action_plans", action_plan_id)
+    return {**plan_record, "items": saved_items}
+
+
+def _with_action_items(plan: dict[str, Any]) -> dict[str, Any]:
+    if database_enabled():
+        items = _query_database(
+            """
+            select *
+            from public.action_items
+            where action_plan_id = %(action_plan_id)s
+            order by created_at asc
+            """,
+            {"action_plan_id": plan["action_plan_id"]},
+        )
+        return {**plan, "items": items}
+
+    items = [
+        item
+        for item in _action_items
+        if item.get("action_plan_id") == plan.get("action_plan_id")
+    ]
+    return {**plan, "items": items}
 
 
 async def save_feedback(result_id: str, payload: dict[str, Any]) -> dict[str, Any]:
