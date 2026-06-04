@@ -3,26 +3,33 @@ import {
   Activity,
   ArrowRight,
   Bell,
+  Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Gauge,
   HeartPulse,
+  Info,
   LogOut,
   MessageCircle,
-  Target,
+  Save,
+  ShieldCheck,
   TrendingDown,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
+import { ReminderSummary, RemindersPage } from "./reminders/RemindersPage";
+import { SimulatorPage } from "./simulator/SimulatorPage";
 
 type PatientTab =
   | "dashboard"
+  | "assessment"
   | "risk"
   | "action"
   | "simulator"
-  | "goals"
   | "reminders"
   | "navigator";
 
@@ -55,24 +62,30 @@ type ActionPlanItem = {
   reason: string;
 };
 
-type Goal = {
-  title: string;
-  progress: number;
-  linked: string;
+type AssessmentForm = {
+  age: number;
+  sex: "female" | "male";
+  systolicBp: number;
+  cholesterol: number;
+  glucose: "normal" | "borderline" | "high";
+  smoking: "no" | "former" | "yes";
+  activity: "low" | "medium" | "high";
+  familyHistory: "no" | "yes" | "unsure";
+  symptoms: "none" | "mild" | "urgent";
 };
 
-type Reminder = {
+type AssessmentStep = {
+  id: string;
   title: string;
-  time: string;
-  linked: string;
+  description: string;
 };
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
+  { id: "assessment", label: "Risk Assessment", icon: ClipboardList },
   { id: "risk", label: "Risk Explorer", icon: HeartPulse },
   { id: "action", label: "Action Plan", icon: ClipboardList },
   { id: "simulator", label: "What-If Simulator", icon: TrendingDown },
-  { id: "goals", label: "Goals", icon: Target },
   { id: "reminders", label: "Reminders", icon: Bell },
   { id: "navigator", label: "Care Navigator", icon: MessageCircle },
 ];
@@ -100,7 +113,7 @@ const riskFactors: RiskFactor[] = [
     impact: "Medium impact",
     description:
       "Age is considered because cardiovascular risk usually increases over time.",
-    action: "Focus on modifiable factors such as activity, diet, and monitoring.",
+    action: "Focus on modifiable factors such as activity, smoking, blood pressure, and monitoring.",
   },
 ];
 
@@ -128,17 +141,40 @@ const actionPlans: ActionPlanItem[] = [
   },
 ];
 
-const goals: Goal[] = [
-  { title: "Walk 8,000 steps daily", progress: 70, linked: "Physical activity" },
-  { title: "Reduce salty food this week", progress: 45, linked: "Blood pressure" },
-  { title: "Check blood pressure twice weekly", progress: 60, linked: "Monitoring" },
+const assessmentSteps: AssessmentStep[] = [
+  {
+    id: "basics",
+    title: "About you",
+    description: "Basic details help the model understand your general risk context.",
+  },
+  {
+    id: "numbers",
+    title: "Health numbers",
+    description: "Enter the latest values you know. Helpful ranges are shown beside each field.",
+  },
+  {
+    id: "habits",
+    title: "Daily habits",
+    description: "Simple lifestyle questions help explain which risk factors may be improved.",
+  },
+  {
+    id: "review",
+    title: "Review",
+    description: "Check your answers before generating your estimated risk result.",
+  },
 ];
 
-const reminders: Reminder[] = [
-  { title: "Evening walk", time: "Today, 6:00 PM", linked: "Walk 8,000 steps daily" },
-  { title: "Blood pressure check", time: "Tomorrow, 9:00 AM", linked: "Monitoring" },
-  { title: "Weekly goal review", time: "Sunday, 8:00 PM", linked: "Goal progress" },
-];
+const initialAssessment: AssessmentForm = {
+  age: 45,
+  sex: "female",
+  systolicBp: 132,
+  cholesterol: 210,
+  glucose: "normal",
+  smoking: "no",
+  activity: "medium",
+  familyHistory: "unsure",
+  symptoms: "none",
+};
 
 function riskCategory(score: number): RiskCategory {
   if (score < 10) return { label: "Low Risk", tone: "green" };
@@ -146,61 +182,145 @@ function riskCategory(score: number): RiskCategory {
   return { label: "High Risk", tone: "red" };
 }
 
+function calculateDemoRisk(form: AssessmentForm) {
+  let score = 4;
+  score += Math.max(0, (form.age - 35) * 0.28);
+  score += form.sex === "male" ? 1.8 : 0.8;
+  score += Math.max(0, (form.systolicBp - 115) * 0.13);
+  score += Math.max(0, (form.cholesterol - 180) * 0.035);
+  score += form.glucose === "high" ? 3.3 : form.glucose === "borderline" ? 1.4 : 0;
+  score += form.smoking === "yes" ? 4.4 : form.smoking === "former" ? 1.2 : 0;
+  score += form.activity === "low" ? 3.2 : form.activity === "medium" ? 1.1 : 0;
+  score += form.familyHistory === "yes" ? 2.2 : form.familyHistory === "unsure" ? 0.8 : 0;
+  score += form.symptoms === "urgent" ? 5 : form.symptoms === "mild" ? 1.5 : 0;
+
+  return Math.min(38, Math.max(5, Math.round(score * 10) / 10));
+}
+
+function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
+  const factors: RiskFactor[] = [];
+
+  if (form.systolicBp >= 130) {
+    factors.push({
+      name: "Blood Pressure",
+      type: "Modifiable",
+      impact: form.systolicBp >= 140 ? "High impact" : "Medium impact",
+      description:
+        "Your blood pressure reading is above the usual healthy range. Lowering it may help reduce strain on your heart and blood vessels.",
+      action: "Track blood pressure, reduce salty food, and ask a healthcare professional if readings stay high.",
+    });
+  }
+
+  if (form.activity !== "high") {
+    factors.push({
+      name: "Physical Activity",
+      type: "Modifiable",
+      impact: form.activity === "low" ? "High impact" : "Medium impact",
+      description:
+        "Being less active can affect weight, blood pressure, cholesterol, and long-term heart health.",
+      action: "Start with a realistic walking or light exercise target and increase gradually.",
+    });
+  }
+
+  if (form.cholesterol >= 200) {
+    factors.push({
+      name: "Cholesterol",
+      type: "Modifiable",
+      impact: "Medium impact",
+      description:
+        "Higher cholesterol can contribute to fatty build-up in blood vessels over time.",
+      action: "Choose more fibre-rich foods and discuss follow-up testing with a healthcare professional.",
+    });
+  }
+
+  if (form.smoking !== "no") {
+    factors.push({
+      name: "Smoking Status",
+      type: "Modifiable",
+      impact: form.smoking === "yes" ? "High impact" : "Medium impact",
+      description:
+        "Smoking can damage blood vessels and increase the chance of cardiovascular problems.",
+      action: "Consider a smoking reduction or cessation plan with proper support.",
+    });
+  }
+
+  if (form.familyHistory === "yes" || form.age >= 55) {
+    factors.push({
+      name: form.familyHistory === "yes" ? "Family History" : "Age Group",
+      type: "Non-modifiable",
+      impact: "Medium impact",
+      description:
+        "This factor cannot be changed, but it helps explain why regular monitoring and healthier habits matter.",
+      action: "Focus on modifiable factors such as activity, smoking, and blood pressure monitoring.",
+    });
+  }
+
+  return factors.length ? factors.slice(0, 3) : riskFactors;
+}
+
 export function PatientDashboard({ onLogout }: { onLogout?: () => void }) {
   const [activePage, setActivePage] = useState<PatientTab>("dashboard");
-  const [steps, setSteps] = useState(8000);
-  const [salt, setSalt] = useState(3);
-  const [exercise, setExercise] = useState(3);
+  const [assessmentStep, setAssessmentStep] = useState(0);
+  const [assessment, setAssessment] = useState<AssessmentForm>(initialAssessment);
+  const [hasAssessment, setHasAssessment] = useState(false);
 
-  const currentRisk = 18;
-  const projectedRisk = useMemo(() => {
-    const stepEffect = Math.max(0, (steps - 4000) / 4000) * 1.3;
-    const saltEffect = Math.max(0, 5 - salt) * 0.9;
-    const exerciseEffect = exercise * 0.85;
-    const value = currentRisk - stepEffect - saltEffect - exerciseEffect;
-    return Math.max(7, Math.round(value * 10) / 10);
-  }, [steps, salt, exercise]);
+  const currentRisk = useMemo(() => calculateDemoRisk(assessment), [assessment]);
+  const personalizedRiskFactors = useMemo(() => buildRiskFactors(assessment), [assessment]);
 
   const currentCategory = riskCategory(currentRisk);
-  const projectedCategory = riskCategory(projectedRisk);
-  const isUnsafeScenario = steps > 20000 || exercise > 6;
+
+  const updateAssessment = <Key extends keyof AssessmentForm>(
+    key: Key,
+    value: AssessmentForm[Key],
+  ) => setAssessment((current) => ({ ...current, [key]: value }));
+
+  const completeAssessment = () => {
+    setHasAssessment(true);
+    setActivePage("risk");
+  };
 
   return (
     <main className="min-h-screen bg-[#F8FAFC] text-slate-950 lg:grid lg:grid-cols-[280px_1fr]">
       <PatientSidebar activePage={activePage} onChange={setActivePage} />
 
       <section className="min-w-0 px-5 py-5 lg:px-8">
-        <TopBar onLogout={onLogout} />
+        <TopBar onLogout={onLogout} hasAssessment={hasAssessment} />
 
         <div className="mt-7">
           {activePage === "dashboard" ? (
             <Dashboard
               currentRisk={currentRisk}
               currentCategory={currentCategory}
+              hasAssessment={hasAssessment}
+              riskFactors={personalizedRiskFactors}
               setActivePage={setActivePage}
             />
           ) : null}
+          {activePage === "assessment" ? (
+            <RiskAssessment
+              form={assessment}
+              step={assessmentStep}
+              setStep={setAssessmentStep}
+              updateField={updateAssessment}
+              currentRisk={currentRisk}
+              currentCategory={currentCategory}
+              onComplete={completeAssessment}
+            />
+          ) : null}
           {activePage === "risk" ? (
-            <RiskExplorer currentRisk={currentRisk} currentCategory={currentCategory} />
+            <RiskExplorer
+              currentRisk={currentRisk}
+              currentCategory={currentCategory}
+              hasAssessment={hasAssessment}
+              riskFactors={personalizedRiskFactors}
+              setActivePage={setActivePage}
+            />
           ) : null}
           {activePage === "action" ? <ActionPlan /> : null}
           {activePage === "simulator" ? (
-            <Simulator
-              currentRisk={currentRisk}
-              currentCategory={currentCategory}
-              projectedRisk={projectedRisk}
-              projectedCategory={projectedCategory}
-              steps={steps}
-              setSteps={setSteps}
-              salt={salt}
-              setSalt={setSalt}
-              exercise={exercise}
-              setExercise={setExercise}
-              isUnsafeScenario={isUnsafeScenario}
-            />
+            <SimulatorPage currentRisk={currentRisk} currentCategory={currentCategory} />
           ) : null}
-          {activePage === "goals" ? <Goals /> : null}
-          {activePage === "reminders" ? <Reminders /> : null}
+          {activePage === "reminders" ? <RemindersPage /> : null}
           {activePage === "navigator" ? <CareNavigator /> : null}
         </div>
       </section>
@@ -258,7 +378,13 @@ function PatientSidebar({
   );
 }
 
-function TopBar({ onLogout }: { onLogout?: () => void }) {
+function TopBar({
+  onLogout,
+  hasAssessment,
+}: {
+  onLogout?: () => void;
+  hasAssessment: boolean;
+}) {
   return (
     <header className="flex flex-col gap-4 rounded-[24px] border border-white bg-white/80 px-5 py-5 shadow-soft backdrop-blur lg:flex-row lg:items-center lg:justify-between">
       <div>
@@ -267,10 +393,10 @@ function TopBar({ onLogout }: { onLogout?: () => void }) {
           Personalized cardiovascular disease monitoring
         </p>
         <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">
-          Welcome back, Heng Wen
+          Welcome back, Wen Yang
         </h2>
         <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-          Review your risk result, understand the main contributors, and track safer lifestyle goals.
+          Review your risk result, understand the main contributors, and track safer health reminders.
         </p>
       </div>
 
@@ -281,7 +407,9 @@ function TopBar({ onLogout }: { onLogout?: () => void }) {
           </div>
           <div>
             <strong className="block text-sm text-slate-900">General User</strong>
-            <span className="block text-xs text-slate-500">Last assessment: 14 May 2026</span>
+            <span className="block text-xs text-slate-500">
+              {hasAssessment ? "Last assessment: Today" : "Assessment not completed"}
+            </span>
           </div>
         </div>
         {onLogout ? (
@@ -298,12 +426,74 @@ function TopBar({ onLogout }: { onLogout?: () => void }) {
 function Dashboard({
   currentRisk,
   currentCategory,
+  hasAssessment,
+  riskFactors,
   setActivePage,
 }: {
   currentRisk: number;
   currentCategory: RiskCategory;
+  hasAssessment: boolean;
+  riskFactors: RiskFactor[];
   setActivePage: (page: PatientTab) => void;
 }) {
+  if (!hasAssessment) {
+    return (
+      <section className="grid gap-6">
+        <div className="grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
+          <Card className="overflow-hidden p-6">
+            <div className="grid gap-7 lg:grid-cols-[1fr_260px] lg:items-center">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold text-cyan-700">
+                  <ShieldCheck className="h-4 w-4" />
+                  Start here
+                </p>
+                <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
+                  Complete your CVD risk assessment
+                </h2>
+                <p className="mt-4 max-w-2xl leading-7 text-slate-600">
+                  Answer a short set of plain-language questions about your health numbers and daily habits. After that, this dashboard will show your estimated risk, top contributors, and recommended next steps.
+                </p>
+                <div className="mt-6 flex flex-wrap gap-3">
+                  <Button onClick={() => setActivePage("assessment")}>
+                    Start assessment
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="secondary" onClick={() => setActivePage("navigator")}>
+                    Ask care navigator
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-[22px] border border-cyan-100 bg-cyan-50 p-5">
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-cyan-700 shadow-sm">
+                  <ClipboardList className="h-6 w-6" />
+                </div>
+                <h3 className="mt-5 text-xl font-bold tracking-tight">What you will fill in</h3>
+                <div className="mt-4 grid gap-3 text-sm text-cyan-950">
+                  {["Age and sex", "Blood pressure and cholesterol", "Glucose, smoking, activity", "Family history and symptoms"].map((item) => (
+                    <div key={item} className="flex items-center gap-2">
+                      <Check className="h-4 w-4 text-emerald-600" />
+                      <span>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <CardHeader title="Friendly assessment design" subtitle="Built for non-domain users" />
+            <div className="mt-5 grid gap-4">
+              <PlainLanguagePoint title="Guided steps" text="The form is split into small sections so users are not overwhelmed." />
+              <PlainLanguagePoint title="Helpful ranges" text="Health numbers include simple hints such as usual blood pressure ranges." />
+              <PlainLanguagePoint title="Safety prompts" text="Urgent symptoms are clearly flagged and users are reminded this is not a diagnosis." />
+            </div>
+          </Card>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="grid gap-6">
       <div className="grid gap-6 xl:grid-cols-[2fr_0.85fr]">
@@ -351,9 +541,8 @@ function Dashboard({
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <TopRiskFactors compact />
+        <TopRiskFactors compact factors={riskFactors} />
         <ActionPlan compact />
-        <GoalSummary />
         <ReminderSummary />
       </div>
     </section>
@@ -363,10 +552,40 @@ function Dashboard({
 function RiskExplorer({
   currentRisk,
   currentCategory,
+  hasAssessment,
+  riskFactors,
+  setActivePage,
 }: {
   currentRisk: number;
   currentCategory: RiskCategory;
+  hasAssessment: boolean;
+  riskFactors: RiskFactor[];
+  setActivePage: (page: PatientTab) => void;
 }) {
+  if (!hasAssessment) {
+    return (
+      <section className="grid gap-6">
+        <SectionTitle
+          label="Risk explanation module"
+          title="Assessment needed first"
+          description="The risk explanation will appear after the user completes the CVD risk assessment."
+        />
+        <Card className="grid gap-4 p-6 md:grid-cols-[1fr_auto] md:items-center">
+          <div>
+            <h3 className="text-xl font-bold tracking-tight text-slate-950">No risk result yet</h3>
+            <p className="mt-2 leading-7 text-slate-600">
+              Complete the guided intake so the platform can estimate risk and explain the top contributing factors in simple language.
+            </p>
+          </div>
+          <Button onClick={() => setActivePage("assessment")}>
+            Start assessment
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </Card>
+      </section>
+    );
+  }
+
   return (
     <section className="grid gap-6">
       <SectionTitle
@@ -387,13 +606,374 @@ function RiskExplorer({
           </Notice>
         </Card>
 
-        <TopRiskFactors />
+        <TopRiskFactors factors={riskFactors} />
       </div>
     </section>
   );
 }
 
-function TopRiskFactors({ compact = false }: { compact?: boolean }) {
+function RiskAssessment({
+  form,
+  step,
+  setStep,
+  updateField,
+  currentRisk,
+  currentCategory,
+  onComplete,
+}: {
+  form: AssessmentForm;
+  step: number;
+  setStep: (step: number) => void;
+  updateField: <Key extends keyof AssessmentForm>(key: Key, value: AssessmentForm[Key]) => void;
+  currentRisk: number;
+  currentCategory: RiskCategory;
+  onComplete: () => void;
+}) {
+  const currentStep = assessmentSteps[step];
+  const isLastStep = step === assessmentSteps.length - 1;
+  const hasUrgentSymptoms = form.symptoms === "urgent";
+
+  return (
+    <section className="grid gap-6">
+      <SectionTitle
+        label="CVD risk assessment"
+        title="Build your risk profile step by step"
+        description="The assessment uses simple questions and helpful hints so general users can complete it without medical training."
+      />
+
+      <Card className="p-5">
+        <div className="grid gap-3 md:grid-cols-4">
+          {assessmentSteps.map((item, index) => {
+            const selected = index === step;
+            const completed = index < step;
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setStep(index)}
+                className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
+                  selected
+                    ? "border-cyan-300 bg-cyan-50 text-cyan-950"
+                    : completed
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200"
+                }`}
+              >
+                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
+                  completed ? "bg-emerald-600 text-white" : selected ? "bg-cyan-700 text-white" : "bg-slate-100"
+                }`}>
+                  {completed ? <Check className="h-4 w-4" /> : index + 1}
+                </span>
+                <span>
+                  <strong className="block text-sm">{item.title}</strong>
+                  <span className="mt-0.5 block text-xs opacity-75">{item.description}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+        <Card className="p-6">
+          <CardHeader title={currentStep.title} subtitle={currentStep.description} />
+
+          <div className="mt-6">
+            {step === 0 ? (
+              <div className="grid gap-5 md:grid-cols-2">
+                <NumberField
+                  label="Age"
+                  value={form.age}
+                  min={18}
+                  max={95}
+                  unit="years"
+                  helper="Use your current age."
+                  onChange={(value) => updateField("age", value)}
+                />
+                <ChoiceGroup
+                  label="Sex"
+                  value={form.sex}
+                  options={[
+                    ["female", "Female"],
+                    ["male", "Male"],
+                  ]}
+                  onChange={(value) => updateField("sex", value as AssessmentForm["sex"])}
+                />
+              </div>
+            ) : null}
+
+            {step === 1 ? (
+              <div className="grid gap-5 md:grid-cols-2">
+                <NumberField
+                  label="Systolic blood pressure"
+                  value={form.systolicBp}
+                  min={80}
+                  max={220}
+                  unit="mmHg"
+                  helper="This is the upper number, for example 132 in 132/84."
+                  onChange={(value) => updateField("systolicBp", value)}
+                />
+                <NumberField
+                  label="Total cholesterol"
+                  value={form.cholesterol}
+                  min={120}
+                  max={360}
+                  unit="mg/dL"
+                  helper="If you only know mmol/L, your clinic report may show both units."
+                  onChange={(value) => updateField("cholesterol", value)}
+                />
+                <div className="md:col-span-2">
+                  <ChoiceGroup
+                    label="Blood glucose"
+                    value={form.glucose}
+                    options={[
+                      ["normal", "Normal"],
+                      ["borderline", "Borderline"],
+                      ["high", "High"],
+                    ]}
+                    onChange={(value) => updateField("glucose", value as AssessmentForm["glucose"])}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {step === 2 ? (
+              <div className="grid gap-5">
+                <ChoiceGroup
+                  label="Smoking status"
+                  value={form.smoking}
+                  options={[
+                    ["no", "No"],
+                    ["former", "Former smoker"],
+                    ["yes", "Currently smoke"],
+                  ]}
+                  onChange={(value) => updateField("smoking", value as AssessmentForm["smoking"])}
+                />
+                <ChoiceGroup
+                  label="Weekly physical activity"
+                  value={form.activity}
+                  options={[
+                    ["low", "Low"],
+                    ["medium", "Some activity"],
+                    ["high", "Active"],
+                  ]}
+                  helper="Choose the closest answer. You do not need an exact exercise log."
+                  onChange={(value) => updateField("activity", value as AssessmentForm["activity"])}
+                />
+                <ChoiceGroup
+                  label="Family history of heart disease"
+                  value={form.familyHistory}
+                  options={[
+                    ["no", "No"],
+                    ["yes", "Yes"],
+                    ["unsure", "Not sure"],
+                  ]}
+                  onChange={(value) => updateField("familyHistory", value as AssessmentForm["familyHistory"])}
+                />
+                <ChoiceGroup
+                  label="Current symptoms"
+                  value={form.symptoms}
+                  options={[
+                    ["none", "No symptoms"],
+                    ["mild", "Mild concern"],
+                    ["urgent", "Chest pain or severe breathlessness"],
+                  ]}
+                  onChange={(value) => updateField("symptoms", value as AssessmentForm["symptoms"])}
+                />
+              </div>
+            ) : null}
+
+            {step === 3 ? (
+              <div className="grid gap-4">
+                <AssessmentReview form={form} />
+                <Notice tone="soft">
+                  Your result will be shown as an estimated risk for health awareness. It is not a medical diagnosis.
+                </Notice>
+                {hasUrgentSymptoms ? (
+                  <Notice tone="danger">
+                    You selected urgent symptoms. Please seek medical care promptly if you are experiencing chest pain, severe breathlessness, fainting, or worsening symptoms.
+                  </Notice>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={step === 0}
+              onClick={() => setStep(Math.max(0, step - 1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Back
+            </Button>
+            {isLastStep ? (
+              <Button type="button" onClick={onComplete}>
+                Generate risk result
+                <Save className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button type="button" onClick={() => setStep(Math.min(assessmentSteps.length - 1, step + 1))}>
+                Continue
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader title="Live estimate preview" subtitle="Updates as the user fills the form" />
+          <div className="mt-6 grid justify-items-center gap-4 text-center">
+            <RiskGauge value={currentRisk} label={currentCategory.label} />
+            <StatusBadge tone={currentCategory.tone}>{currentCategory.label}</StatusBadge>
+            <p className="leading-7 text-slate-600">
+              This preview helps users understand that answers affect the score, while the final explanation appears after submission.
+            </p>
+          </div>
+          <Notice tone={hasUrgentSymptoms ? "danger" : "warning"}>
+            {hasUrgentSymptoms
+              ? "Urgent symptoms should be handled by medical services, not by this assessment alone."
+              : "Use recent clinic or home monitoring values if available. Estimates are less reliable when values are guessed."}
+          </Notice>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
+function PlainLanguagePoint({ title, text }: { title: string; text: string }) {
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-4">
+      <h3 className="flex items-center gap-2 font-bold tracking-tight text-slate-900">
+        <Info className="h-4 w-4 text-cyan-700" />
+        {title}
+      </h3>
+      <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
+    </article>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  unit,
+  helper,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  unit: string;
+  helper: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block rounded-[20px] border border-slate-200 bg-slate-50 p-4">
+      <span className="text-sm font-semibold text-slate-700">{label}</span>
+      <div className="mt-3 flex items-center gap-3">
+        <input
+          className="form-input mt-0"
+          type="number"
+          min={min}
+          max={max}
+          value={value}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+        <span className="w-16 text-sm font-semibold text-slate-500">{unit}</span>
+      </div>
+      <small className="mt-3 block leading-5 text-slate-500">{helper}</small>
+    </label>
+  );
+}
+
+function ChoiceGroup({
+  label,
+  value,
+  options,
+  helper,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[][];
+  helper?: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="text-sm font-semibold text-slate-700">{label}</legend>
+      {helper ? <p className="mt-1 text-sm text-slate-500">{helper}</p> : null}
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        {options.map(([optionValue, optionLabel]) => {
+          const selected = value === optionValue;
+
+          return (
+            <button
+              key={optionValue}
+              type="button"
+              onClick={() => onChange(optionValue)}
+              className={`min-h-16 rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                selected
+                  ? "border-cyan-300 bg-cyan-50 text-cyan-900 ring-2 ring-cyan-100"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:bg-cyan-50"
+              }`}
+            >
+              <span className="flex items-center justify-between gap-3">
+                {optionLabel}
+                {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-700" /> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function AssessmentReview({ form }: { form: AssessmentForm }) {
+  const rows = [
+    ["Age", `${form.age} years`],
+    ["Sex", form.sex === "female" ? "Female" : "Male"],
+    ["Systolic blood pressure", `${form.systolicBp} mmHg`],
+    ["Total cholesterol", `${form.cholesterol} mg/dL`],
+    ["Blood glucose", labelize(form.glucose)],
+    ["Smoking status", labelize(form.smoking)],
+    ["Physical activity", labelize(form.activity)],
+    ["Family history", labelize(form.familyHistory)],
+    ["Current symptoms", labelize(form.symptoms)],
+  ];
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {rows.map(([label, value]) => (
+        <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+          <strong className="mt-1 block text-slate-900">{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function labelize(value: string) {
+  return value
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function TopRiskFactors({
+  compact = false,
+  factors = riskFactors,
+}: {
+  compact?: boolean;
+  factors?: RiskFactor[];
+}) {
   return (
     <Card className="p-6">
       <div className="mb-5 flex items-start justify-between gap-4">
@@ -405,7 +985,7 @@ function TopRiskFactors({ compact = false }: { compact?: boolean }) {
       </div>
 
       <div className="grid gap-4">
-        {riskFactors.map((factor) => (
+        {factors.map((factor) => (
           <article key={factor.name} className="rounded-[20px] border border-slate-200 bg-white p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -479,169 +1059,6 @@ function ActionPlan({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function Simulator({
-  currentRisk,
-  currentCategory,
-  projectedRisk,
-  projectedCategory,
-  steps,
-  setSteps,
-  salt,
-  setSalt,
-  exercise,
-  setExercise,
-  isUnsafeScenario,
-}: {
-  currentRisk: number;
-  currentCategory: RiskCategory;
-  projectedRisk: number;
-  projectedCategory: RiskCategory;
-  steps: number;
-  setSteps: (value: number) => void;
-  salt: number;
-  setSalt: (value: number) => void;
-  exercise: number;
-  setExercise: (value: number) => void;
-  isUnsafeScenario: boolean;
-}) {
-  const reduction = Math.round((currentRisk - projectedRisk) * 10) / 10;
-
-  return (
-    <section className="grid gap-6">
-      <SectionTitle
-        label="What-if lifestyle simulator"
-        title="Explore safe lifestyle scenarios"
-        description="Adjust lifestyle behaviours to see an estimated change in your projected CVD risk."
-      />
-
-      <div className="grid gap-6 xl:grid-cols-[0.85fr_1.4fr]">
-        <Card className="grid content-start gap-5 p-6">
-          <CardHeader title="Create scenario" />
-          <SliderControl label="Daily steps" value={steps} min={3000} max={30000} step={500} unit="steps" onChange={setSteps} />
-          <SliderControl label="Salt intake level" value={salt} min={1} max={5} step={1} unit="/ 5" onChange={setSalt} helper="1 = low salt, 5 = high salt" />
-          <SliderControl label="Exercise sessions per week" value={exercise} min={0} max={7} step={1} unit="sessions" onChange={setExercise} />
-
-          {isUnsafeScenario ? (
-            <Notice tone="danger">
-              This scenario may be too difficult, unrealistic, or unsafe. Consider choosing a more gradual target.
-            </Notice>
-          ) : null}
-        </Card>
-
-        <Card className="p-6">
-          <div className="grid items-center gap-5 md:grid-cols-[1fr_auto_1fr]">
-            <ResultBox title="Current" value={currentRisk} category={currentCategory} />
-            <ArrowRight className="justify-self-center text-cyan-700 md:h-8 md:w-8" />
-            <ResultBox title="Projected" value={projectedRisk} category={projectedCategory} />
-          </div>
-
-          <div className="mt-5 rounded-[22px] border border-cyan-100 bg-cyan-50 p-5">
-            <p className="text-slate-600">Estimated risk change</p>
-            <h3 className="mt-1 text-4xl font-bold tracking-tight text-emerald-700">
-              {reduction > 0 ? `-${reduction}%` : "No reduction"}
-            </h3>
-            <span className="mt-2 block text-slate-600">Most impactful change: increasing physical activity</span>
-          </div>
-
-          <Notice tone="soft">Projected risk is an estimate and not a guaranteed medical outcome.</Notice>
-        </Card>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-3">
-        <ScenarioCard title="Scenario A" desc="Walk 8,000 steps daily" risk="15.4%" />
-        <ScenarioCard title="Scenario B" desc="Walk and reduce salt intake" risk="13.8%" selected />
-        <ScenarioCard title="Scenario C" desc="Exercise 5 times per week" risk="14.2%" />
-      </div>
-    </section>
-  );
-}
-
-function Goals() {
-  return (
-    <section className="grid gap-6">
-      <SectionTitle
-        label="Goal setting"
-        title="Track your health goals"
-        description="Create goals from recommended action plan items and update progress over time."
-      />
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Card className="p-6">
-          <CardHeader title="Active goals" />
-          <div className="mt-5 grid gap-4">
-            {goals.map((goal) => <ProgressItem key={goal.title} item={goal} />)}
-          </div>
-        </Card>
-
-        <FormCard title="Create new goal" buttonLabel="Create goal">
-          <FormLabel label="Goal title">
-            <input className="form-input" placeholder="e.g. Walk 8,000 steps daily" />
-          </FormLabel>
-          <FormLabel label="Linked action plan">
-            <select className="form-input">
-              <option>Increase physical activity</option>
-              <option>Reduce salt intake</option>
-              <option>Monitor blood pressure</option>
-            </select>
-          </FormLabel>
-          <FormLabel label="Target date">
-            <input className="form-input" type="date" />
-          </FormLabel>
-        </FormCard>
-      </div>
-    </section>
-  );
-}
-
-function Reminders() {
-  return (
-    <section className="grid gap-6">
-      <SectionTitle
-        label="Reminder management"
-        title="Upcoming health reminders"
-        description="Link reminders to goals, action plan items, or follow-up activities."
-      />
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Card className="p-6">
-          <div className="grid gap-4">
-            {reminders.map((reminder) => (
-              <article key={reminder.title} className="flex gap-4 rounded-[20px] border border-slate-200 bg-white p-4">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-cyan-50 text-cyan-700">
-                  <Bell className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold tracking-tight text-slate-900">{reminder.title}</h3>
-                  <p className="mt-1 text-slate-600">{reminder.time}</p>
-                  <span className="mt-2 block text-sm text-slate-500">Linked to: {reminder.linked}</span>
-                </div>
-              </article>
-            ))}
-          </div>
-        </Card>
-
-        <FormCard title="Create reminder" buttonLabel="Create reminder">
-          <FormLabel label="Reminder title">
-            <input className="form-input" placeholder="e.g. Evening walk" />
-          </FormLabel>
-          <FormLabel label="Related goal">
-            <select className="form-input">
-              <option>Walk 8,000 steps daily</option>
-              <option>Reduce salty food</option>
-              <option>Blood pressure check</option>
-            </select>
-          </FormLabel>
-          <FormLabel label="Repeat">
-            <select className="form-input">
-              <option>Daily</option>
-              <option>Weekly</option>
-              <option>Once</option>
-            </select>
-          </FormLabel>
-        </FormCard>
-      </div>
-    </section>
-  );
-}
-
 function CareNavigator() {
   return (
     <section className="grid gap-6">
@@ -689,44 +1106,6 @@ function CareNavigator() {
         </Card>
       </div>
     </section>
-  );
-}
-
-function GoalSummary() {
-  return (
-    <Card className="p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <CardHeader title="Active goals" subtitle="Progress" />
-        <Button variant="ghost">Manage</Button>
-      </div>
-      <div className="grid gap-4">
-        {goals.slice(0, 2).map((goal) => <ProgressItem key={goal.title} item={goal} compact />)}
-      </div>
-    </Card>
-  );
-}
-
-function ReminderSummary() {
-  return (
-    <Card className="p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <CardHeader title="Reminders" subtitle="Today" />
-        <Button variant="ghost">Manage</Button>
-      </div>
-      <div className="grid gap-3">
-        {reminders.slice(0, 2).map((reminder) => (
-          <div key={reminder.title} className="flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
-            <span className="grid h-9 w-9 place-items-center rounded-2xl bg-cyan-50 text-cyan-700">
-              <Bell className="h-4 w-4" />
-            </span>
-            <div>
-              <strong className="block text-sm text-slate-900">{reminder.title}</strong>
-              <p className="mt-1 text-xs text-slate-500">{reminder.time}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
   );
 }
 
@@ -821,134 +1200,6 @@ function SectionTitle({
       </h2>
       <p className="mt-4 text-base leading-7 text-slate-600">{description}</p>
     </div>
-  );
-}
-
-function SliderControl({
-  label,
-  value,
-  min,
-  max,
-  step,
-  unit,
-  onChange,
-  helper,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  unit: string;
-  onChange: (value: number) => void;
-  helper?: string;
-}) {
-  return (
-    <div className="grid gap-3">
-      <div className="flex items-center justify-between gap-4">
-        <span className="font-bold text-slate-700">{label}</span>
-        <strong className="text-sm text-slate-950">
-          {value} {unit}
-        </strong>
-      </div>
-      <input
-        className="w-full accent-cyan-700"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-      {helper ? <small className="text-slate-500">{helper}</small> : null}
-    </div>
-  );
-}
-
-function ResultBox({
-  title,
-  value,
-  category,
-}: {
-  title: string;
-  value: number;
-  category: RiskCategory;
-}) {
-  return (
-    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-5 text-center">
-      <p className="text-slate-600">{title}</p>
-      <h3 className="my-3 text-4xl font-bold tracking-tight text-slate-950">{value}%</h3>
-      <div className="flex justify-center">
-        <StatusBadge tone={category.tone}>{category.label}</StatusBadge>
-      </div>
-    </div>
-  );
-}
-
-function ScenarioCard({
-  title,
-  desc,
-  risk,
-  selected = false,
-}: {
-  title: string;
-  desc: string;
-  risk: string;
-  selected?: boolean;
-}) {
-  return (
-    <article className={`rounded-[22px] border p-5 ${selected ? "border-cyan-300 bg-cyan-50" : "border-slate-200 bg-white"}`}>
-      <span className="text-xs font-bold uppercase tracking-wide text-cyan-700">{title}</span>
-      <h3 className="mt-2 font-bold tracking-tight text-slate-900">{desc}</h3>
-      <p className="mt-2 text-slate-600">Projected risk: {risk}</p>
-    </article>
-  );
-}
-
-function ProgressItem({ item, compact = false }: { item: Goal; compact?: boolean }) {
-  return (
-    <article className="rounded-[20px] border border-slate-200 bg-white p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="font-bold tracking-tight text-slate-900">{item.title}</h3>
-          {!compact ? <p className="mt-1 text-sm text-slate-500">Linked to: {item.linked}</p> : null}
-        </div>
-        <strong className="text-slate-950">{item.progress}%</strong>
-      </div>
-      <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-slate-200">
-        <div className="h-full rounded-full bg-cyan-600" style={{ width: `${item.progress}%` }} />
-      </div>
-    </article>
-  );
-}
-
-function FormCard({
-  title,
-  buttonLabel,
-  children,
-}: {
-  title: string;
-  buttonLabel: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card className="grid content-start gap-4 p-6">
-      <CardHeader title={title} />
-      {children}
-      <Button className="w-full">
-        {buttonLabel}
-        <CheckCircle2 className="h-4 w-4" />
-      </Button>
-    </Card>
-  );
-}
-
-function FormLabel({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="text-sm font-semibold text-slate-700">{label}</span>
-      {children}
-    </label>
   );
 }
 
