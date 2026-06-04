@@ -57,7 +57,7 @@ function App() {
   }
 
   if (currentPage === "patient") {
-    return <PatientDashboard onLogout={logout} />;
+    return <PatientDashboard currentUser={currentUser} onLogout={logout} />;
   }
 
   return (

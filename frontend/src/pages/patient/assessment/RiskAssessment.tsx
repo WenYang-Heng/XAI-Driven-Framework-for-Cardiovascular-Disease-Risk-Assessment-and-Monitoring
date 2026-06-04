@@ -21,7 +21,13 @@ type RiskAssessmentProps = {
   updateField: <Key extends keyof AssessmentForm>(key: Key, value: AssessmentForm[Key]) => void;
   currentRisk: number;
   currentCategory: RiskCategory;
-  onComplete: () => void;
+  prediction?: {
+    risk_level: string;
+    confidence_level: string;
+  } | null;
+  error?: string | null;
+  isLoading?: boolean;
+  onComplete: () => void | Promise<void>;
   RiskGauge: React.ComponentType<{ value: number; label: string }>;
   StatusBadge: React.ComponentType<{ tone: RiskCategory["tone"]; children: React.ReactNode }>;
   Notice: React.ComponentType<{ tone: "soft" | "warning" | "danger"; children: React.ReactNode }>;
@@ -63,6 +69,9 @@ export function RiskAssessment({
   updateField,
   currentRisk,
   currentCategory,
+  prediction,
+  error,
+  isLoading = false,
   onComplete,
   RiskGauge,
   StatusBadge,
@@ -134,6 +143,12 @@ export function RiskAssessment({
                     You selected urgent symptoms. Please seek medical care promptly if you are experiencing chest pain, severe breathlessness, fainting, or worsening symptoms.
                   </Notice>
                 ) : null}
+                {error ? <Notice tone="danger">{error}</Notice> : null}
+                {prediction ? (
+                  <Notice tone="soft">
+                    Latest saved result: {labelize(prediction.risk_level)} risk with {labelize(prediction.confidence_level)} confidence.
+                  </Notice>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -149,8 +164,8 @@ export function RiskAssessment({
               Back
             </Button>
             {isLastStep ? (
-              <Button type="button" onClick={onComplete}>
-                Generate risk result
+              <Button type="button" disabled={isLoading} onClick={onComplete}>
+                {isLoading ? "Saving assessment..." : "Generate risk result"}
                 <Save className="h-4 w-4" />
               </Button>
             ) : (
@@ -210,28 +225,57 @@ function NumbersStep({ form, updateField }: { form: AssessmentForm; updateField:
     <div className="grid gap-5">
       <ChoiceGroup
         label="Do you know your latest blood pressure?"
-        value={form.bpKnown}
+        value={form.bpInputType}
         options={[
-          ["known", "Yes, I know it"],
+          ["exact", "Yes, exact value"],
+          ["category", "Only the category"],
           ["unknown", "Not sure"],
         ]}
         helper="If you do not know the value, choose not sure instead of guessing."
-        onChange={(value) => updateField("bpKnown", value as AssessmentForm["bpKnown"])}
+        onChange={(value) => updateField("bpInputType", value as AssessmentForm["bpInputType"])}
       />
-      {form.bpKnown === "known" ? (
+      {form.bpInputType === "exact" ? (
         <NumberField label="Systolic blood pressure" value={form.systolicBp} min={80} max={220} unit="mmHg" helper="This is the upper number, for example 132 in 132/84." onChange={(value) => updateField("systolicBp", value)} />
+      ) : null}
+      {form.bpInputType === "category" ? (
+        <ChoiceGroup
+          label="Blood pressure category"
+          value={form.bpCategory}
+          options={[
+            ["low", "Low"],
+            ["normal", "Normal"],
+            ["elevated", "Elevated"],
+            ["stage_1", "High stage 1"],
+            ["stage_2", "High stage 2"],
+            ["crisis", "Very high"],
+          ]}
+          onChange={(value) => updateField("bpCategory", value as AssessmentForm["bpCategory"])}
+        />
       ) : null}
       <ChoiceGroup
         label="Do you know your latest cholesterol?"
-        value={form.cholesterolKnown}
+        value={form.cholesterolInputType}
         options={[
-          ["known", "Yes, I know it"],
+          ["exact", "Yes, exact value"],
+          ["category", "Only the category"],
           ["unknown", "Not sure"],
         ]}
-        onChange={(value) => updateField("cholesterolKnown", value as AssessmentForm["cholesterolKnown"])}
+        onChange={(value) => updateField("cholesterolInputType", value as AssessmentForm["cholesterolInputType"])}
       />
-      {form.cholesterolKnown === "known" ? (
+      {form.cholesterolInputType === "exact" ? (
         <NumberField label="Total cholesterol" value={form.cholesterol} min={120} max={360} unit="mg/dL" helper="If you only know mmol/L, your clinic report may show both units." onChange={(value) => updateField("cholesterol", value)} />
+      ) : null}
+      {form.cholesterolInputType === "category" ? (
+        <ChoiceGroup
+          label="Cholesterol category"
+          value={form.cholesterolCategory}
+          options={[
+            ["desirable", "Desirable"],
+            ["borderline", "Borderline"],
+            ["high", "High"],
+          ]}
+          onChange={(value) => updateField("cholesterolCategory", value as AssessmentForm["cholesterolCategory"])}
+        />
       ) : null}
       <ChoiceGroup
         label="Blood glucose"
@@ -318,8 +362,8 @@ function AssessmentReview({ form }: { form: AssessmentForm }) {
   const rows = [
     ["Age", `${form.age} years`],
     ["Sex", form.sex === "female" ? "Female" : "Male"],
-    ["Systolic blood pressure", form.bpKnown === "known" ? `${form.systolicBp} mmHg` : "Not sure"],
-    ["Total cholesterol", form.cholesterolKnown === "known" ? `${form.cholesterol} mg/dL` : "Not sure"],
+    ["Blood pressure", form.bpInputType === "exact" ? `${form.systolicBp} mmHg` : form.bpInputType === "category" ? labelize(form.bpCategory) : "Not sure"],
+    ["Total cholesterol", form.cholesterolInputType === "exact" ? `${form.cholesterol} mg/dL` : form.cholesterolInputType === "category" ? labelize(form.cholesterolCategory) : "Not sure"],
     ["Blood glucose", labelize(form.glucose)],
     ["Diabetes history", labelize(form.diabetes)],
     ["Weight category", labelize(form.weightCategory)],

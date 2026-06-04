@@ -1,19 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArrowRight,
   Bell,
   Check,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   ClipboardList,
   Gauge,
   HeartPulse,
   Info,
   LogOut,
   MessageCircle,
-  Save,
   ShieldCheck,
   TrendingDown,
 } from "lucide-react";
@@ -21,6 +17,8 @@ import type { LucideIcon } from "lucide-react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
+import { API_BASE_URL } from "../domain-expert/constants";
+import { RiskAssessment as PatientRiskAssessment } from "./assessment/RiskAssessment";
 import { ReminderSummary, RemindersPage } from "./reminders/RemindersPage";
 import { SimulatorPage } from "./simulator/SimulatorPage";
 
@@ -28,6 +26,7 @@ type PatientTab =
   | "dashboard"
   | "assessment"
   | "risk"
+  | "history"
   | "action"
   | "simulator"
   | "reminders"
@@ -65,25 +64,62 @@ type ActionPlanItem = {
 type AssessmentForm = {
   age: number;
   sex: "female" | "male";
+  bpInputType: "exact" | "category" | "unknown";
   systolicBp: number;
+  bpCategory: "low" | "normal" | "elevated" | "stage_1" | "stage_2" | "crisis";
+  cholesterolInputType: "exact" | "category" | "unknown";
   cholesterol: number;
+  cholesterolCategory: "desirable" | "borderline" | "high";
   glucose: "normal" | "borderline" | "high";
+  diabetes: "no" | "prediabetes" | "yes" | "unsure";
   smoking: "no" | "former" | "yes";
   activity: "low" | "medium" | "high";
+  weightCategory: "healthy" | "overweight" | "obese" | "unsure";
+  bpMedication: "no" | "yes" | "unsure";
   familyHistory: "no" | "yes" | "unsure";
   symptoms: "none" | "mild" | "urgent";
 };
 
-type AssessmentStep = {
-  id: string;
-  title: string;
-  description: string;
+type PatientPrediction = {
+  risk_score: number;
+  risk_level: "low" | "moderate" | "high";
+  confidence_level: "low" | "medium" | "high";
+  prediction_method: string;
+  estimated_inputs: {
+    systolic_bp?: number | null;
+    total_cholesterol?: number | null;
+  };
+  missing_inputs: string[];
+  explanation: string[];
+};
+
+type AssessmentHistoryItem = {
+  assessment_id: string;
+  created_at?: string;
+  assessed_at?: string;
+  risk_score: number;
+  risk_category: "low" | "moderate" | "high";
+  confidence_level: "low" | "medium" | "high";
+  bp_input_type?: string;
+  systolic_bp?: number | null;
+  bp_category?: string | null;
+  cholesterol_input_type?: string;
+  total_cholesterol?: number | null;
+  cholesterol_category?: string | null;
+  explanation?: string[];
+};
+
+type CurrentUser = {
+  id?: string;
+  fullName?: string;
+  email?: string;
 };
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
   { id: "assessment", label: "Risk Assessment", icon: ClipboardList },
   { id: "risk", label: "Risk Explorer", icon: HeartPulse },
+  { id: "history", label: "Assessment History", icon: ClipboardList },
   { id: "action", label: "Action Plan", icon: ClipboardList },
   { id: "simulator", label: "What-If Simulator", icon: TrendingDown },
   { id: "reminders", label: "Reminders", icon: Bell },
@@ -141,44 +177,28 @@ const actionPlans: ActionPlanItem[] = [
   },
 ];
 
-const assessmentSteps: AssessmentStep[] = [
-  {
-    id: "basics",
-    title: "About you",
-    description: "Basic details help the model understand your general risk context.",
-  },
-  {
-    id: "numbers",
-    title: "Health numbers",
-    description: "Enter the latest values you know. Helpful ranges are shown beside each field.",
-  },
-  {
-    id: "habits",
-    title: "Daily habits",
-    description: "Simple lifestyle questions help explain which risk factors may be improved.",
-  },
-  {
-    id: "review",
-    title: "Review",
-    description: "Check your answers before generating your estimated risk result.",
-  },
-];
-
 const initialAssessment: AssessmentForm = {
   age: 45,
   sex: "female",
+  bpInputType: "exact",
   systolicBp: 132,
+  bpCategory: "stage_1",
+  cholesterolInputType: "exact",
   cholesterol: 210,
+  cholesterolCategory: "borderline",
   glucose: "normal",
+  diabetes: "unsure",
   smoking: "no",
   activity: "medium",
+  weightCategory: "unsure",
+  bpMedication: "unsure",
   familyHistory: "unsure",
   symptoms: "none",
 };
 
 function riskCategory(score: number): RiskCategory {
-  if (score < 10) return { label: "Low Risk", tone: "green" };
-  if (score < 20) return { label: "Moderate Risk", tone: "amber" };
+  if (score < 25) return { label: "Low Risk", tone: "green" };
+  if (score < 55) return { label: "Moderate Risk", tone: "amber" };
   return { label: "High Risk", tone: "red" };
 }
 
@@ -186,11 +206,13 @@ function calculateDemoRisk(form: AssessmentForm) {
   let score = 4;
   score += Math.max(0, (form.age - 35) * 0.28);
   score += form.sex === "male" ? 1.8 : 0.8;
-  score += Math.max(0, (form.systolicBp - 115) * 0.13);
-  score += Math.max(0, (form.cholesterol - 180) * 0.035);
+  score += form.bpInputType === "exact" ? Math.max(0, (form.systolicBp - 115) * 0.13) : 1.2;
+  score += form.cholesterolInputType === "exact" ? Math.max(0, (form.cholesterol - 180) * 0.035) : 0.9;
   score += form.glucose === "high" ? 3.3 : form.glucose === "borderline" ? 1.4 : 0;
+  score += form.diabetes === "yes" ? 3.2 : form.diabetes === "prediabetes" ? 1.5 : form.diabetes === "unsure" ? 0.7 : 0;
   score += form.smoking === "yes" ? 4.4 : form.smoking === "former" ? 1.2 : 0;
   score += form.activity === "low" ? 3.2 : form.activity === "medium" ? 1.1 : 0;
+  score += form.weightCategory === "obese" ? 2.4 : form.weightCategory === "overweight" ? 1.2 : form.weightCategory === "unsure" ? 0.4 : 0;
   score += form.familyHistory === "yes" ? 2.2 : form.familyHistory === "unsure" ? 0.8 : 0;
   score += form.symptoms === "urgent" ? 5 : form.symptoms === "mild" ? 1.5 : 0;
 
@@ -200,7 +222,7 @@ function calculateDemoRisk(form: AssessmentForm) {
 function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
   const factors: RiskFactor[] = [];
 
-  if (form.systolicBp >= 130) {
+  if (form.bpInputType === "exact" && form.systolicBp >= 130) {
     factors.push({
       name: "Blood Pressure",
       type: "Modifiable",
@@ -222,7 +244,7 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.cholesterol >= 200) {
+  if (form.cholesterolInputType === "exact" && form.cholesterol >= 200) {
     factors.push({
       name: "Cholesterol",
       type: "Modifiable",
@@ -244,6 +266,28 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
+  if (form.weightCategory === "overweight" || form.weightCategory === "obese") {
+    factors.push({
+      name: "Weight Category",
+      type: "Modifiable",
+      impact: form.weightCategory === "obese" ? "High impact" : "Medium impact",
+      description:
+        "Weight category can affect blood pressure, glucose control, cholesterol, and long-term cardiovascular risk.",
+      action: "Focus on gradual, sustainable changes in activity, monitoring, and follow-up care.",
+    });
+  }
+
+  if (form.diabetes === "yes" || form.glucose === "high") {
+    factors.push({
+      name: "Blood Sugar Control",
+      type: "Modifiable",
+      impact: "High impact",
+      description:
+        "High blood sugar or diabetes can increase the risk of blood vessel and heart problems over time.",
+      action: "Track glucose if advised and discuss care targets with a healthcare professional.",
+    });
+  }
+
   if (form.familyHistory === "yes" || form.age >= 55) {
     factors.push({
       name: form.familyHistory === "yes" ? "Family History" : "Age Group",
@@ -258,25 +302,112 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
   return factors.length ? factors.slice(0, 3) : riskFactors;
 }
 
-export function PatientDashboard({ onLogout }: { onLogout?: () => void }) {
+function formToPatientAssessmentPayload(form: AssessmentForm, userId: string) {
+  return {
+    user_id: userId,
+    age: form.age,
+    sex: form.sex,
+    bp_input_type: form.bpInputType,
+    systolic_bp: form.bpInputType === "exact" ? form.systolicBp : null,
+    bp_category: form.bpInputType === "category" ? form.bpCategory : null,
+    cholesterol_input_type: form.cholesterolInputType,
+    total_cholesterol: form.cholesterolInputType === "exact" ? form.cholesterol : null,
+    cholesterol_category: form.cholesterolInputType === "category" ? form.cholesterolCategory : null,
+    diabetes_history: form.diabetes,
+    smoking_status: form.smoking,
+    activity_level: form.activity,
+    weight_category: form.weightCategory,
+  };
+}
+
+async function loadAssessmentHistory(userId: string): Promise<AssessmentHistoryItem[]> {
+  const response = await fetch(`${API_BASE_URL}/api/patient-assessments/history/${userId}`);
+  if (!response.ok) {
+    throw new Error("Unable to load assessment history.");
+  }
+  const data = await response.json();
+  return data.items ?? [];
+}
+
+function riskLevelLabel(level?: string) {
+  if (!level) {
+    return "Pending";
+  }
+  return `${level.charAt(0).toUpperCase()}${level.slice(1)} Risk`;
+}
+
+function riskTone(level?: string): StatusTone {
+  if (level === "high") {
+    return "red";
+  }
+  if (level === "moderate") {
+    return "amber";
+  }
+  return "green";
+}
+
+export function PatientDashboard({ currentUser, onLogout }: { currentUser?: CurrentUser | null; onLogout?: () => void }) {
   const [activePage, setActivePage] = useState<PatientTab>("dashboard");
   const [assessmentStep, setAssessmentStep] = useState(0);
   const [assessment, setAssessment] = useState<AssessmentForm>(initialAssessment);
   const [hasAssessment, setHasAssessment] = useState(false);
+  const [latestPrediction, setLatestPrediction] = useState<PatientPrediction | null>(null);
+  const [assessmentHistory, setAssessmentHistory] = useState<AssessmentHistoryItem[]>([]);
+  const [assessmentError, setAssessmentError] = useState<string | null>(null);
+  const [isAssessmentLoading, setIsAssessmentLoading] = useState(false);
+  const userId = currentUser?.id;
 
-  const currentRisk = useMemo(() => calculateDemoRisk(assessment), [assessment]);
+  const previewRisk = useMemo(() => calculateDemoRisk(assessment), [assessment]);
+  const currentRisk = latestPrediction ? Math.round(latestPrediction.risk_score * 1000) / 10 : previewRisk;
   const personalizedRiskFactors = useMemo(() => buildRiskFactors(assessment), [assessment]);
 
   const currentCategory = riskCategory(currentRisk);
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+
+    loadAssessmentHistory(userId)
+      .then(setAssessmentHistory)
+      .catch(() => setAssessmentHistory([]));
+  }, [userId]);
 
   const updateAssessment = <Key extends keyof AssessmentForm>(
     key: Key,
     value: AssessmentForm[Key],
   ) => setAssessment((current) => ({ ...current, [key]: value }));
 
-  const completeAssessment = () => {
-    setHasAssessment(true);
-    setActivePage("risk");
+  const completeAssessment = async () => {
+    if (!userId) {
+      setAssessmentError("Sign in before saving an assessment.");
+      return;
+    }
+
+    setIsAssessmentLoading(true);
+    setAssessmentError(null);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/patient-assessments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formToPatientAssessmentPayload(assessment, userId)),
+      });
+
+      if (!response.ok) {
+        throw new Error("The patient assessment API returned an error.");
+      }
+
+      const data = await response.json();
+      setLatestPrediction(data.prediction);
+      setHasAssessment(true);
+      setAssessmentHistory(await loadAssessmentHistory(userId));
+      setActivePage("risk");
+    } catch (error) {
+      setAssessmentError(error instanceof Error ? error.message : "Unable to save this assessment.");
+    } finally {
+      setIsAssessmentLoading(false);
+    }
   };
 
   return (
@@ -297,14 +428,21 @@ export function PatientDashboard({ onLogout }: { onLogout?: () => void }) {
             />
           ) : null}
           {activePage === "assessment" ? (
-            <RiskAssessment
+            <PatientRiskAssessment
               form={assessment}
               step={assessmentStep}
               setStep={setAssessmentStep}
               updateField={updateAssessment}
               currentRisk={currentRisk}
               currentCategory={currentCategory}
+              prediction={latestPrediction}
+              error={assessmentError}
+              isLoading={isAssessmentLoading}
               onComplete={completeAssessment}
+              RiskGauge={RiskGauge}
+              StatusBadge={StatusBadge}
+              Notice={Notice}
+              SectionTitle={SectionTitle}
             />
           ) : null}
           {activePage === "risk" ? (
@@ -315,6 +453,9 @@ export function PatientDashboard({ onLogout }: { onLogout?: () => void }) {
               riskFactors={personalizedRiskFactors}
               setActivePage={setActivePage}
             />
+          ) : null}
+          {activePage === "history" ? (
+            <AssessmentHistory items={assessmentHistory} onStartAssessment={() => setActivePage("assessment")} />
           ) : null}
           {activePage === "action" ? <ActionPlan /> : null}
           {activePage === "simulator" ? (
@@ -612,237 +753,6 @@ function RiskExplorer({
   );
 }
 
-function RiskAssessment({
-  form,
-  step,
-  setStep,
-  updateField,
-  currentRisk,
-  currentCategory,
-  onComplete,
-}: {
-  form: AssessmentForm;
-  step: number;
-  setStep: (step: number) => void;
-  updateField: <Key extends keyof AssessmentForm>(key: Key, value: AssessmentForm[Key]) => void;
-  currentRisk: number;
-  currentCategory: RiskCategory;
-  onComplete: () => void;
-}) {
-  const currentStep = assessmentSteps[step];
-  const isLastStep = step === assessmentSteps.length - 1;
-  const hasUrgentSymptoms = form.symptoms === "urgent";
-
-  return (
-    <section className="grid gap-6">
-      <SectionTitle
-        label="CVD risk assessment"
-        title="Build your risk profile step by step"
-        description="The assessment uses simple questions and helpful hints so general users can complete it without medical training."
-      />
-
-      <Card className="p-5">
-        <div className="grid gap-3 md:grid-cols-4">
-          {assessmentSteps.map((item, index) => {
-            const selected = index === step;
-            const completed = index < step;
-
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setStep(index)}
-                className={`flex items-center gap-3 rounded-2xl border p-3 text-left transition ${
-                  selected
-                    ? "border-cyan-300 bg-cyan-50 text-cyan-950"
-                    : completed
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200"
-                }`}
-              >
-                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold ${
-                  completed ? "bg-emerald-600 text-white" : selected ? "bg-cyan-700 text-white" : "bg-slate-100"
-                }`}>
-                  {completed ? <Check className="h-4 w-4" /> : index + 1}
-                </span>
-                <span>
-                  <strong className="block text-sm">{item.title}</strong>
-                  <span className="mt-0.5 block text-xs opacity-75">{item.description}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-
-      <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
-        <Card className="p-6">
-          <CardHeader title={currentStep.title} subtitle={currentStep.description} />
-
-          <div className="mt-6">
-            {step === 0 ? (
-              <div className="grid gap-5 md:grid-cols-2">
-                <NumberField
-                  label="Age"
-                  value={form.age}
-                  min={18}
-                  max={95}
-                  unit="years"
-                  helper="Use your current age."
-                  onChange={(value) => updateField("age", value)}
-                />
-                <ChoiceGroup
-                  label="Sex"
-                  value={form.sex}
-                  options={[
-                    ["female", "Female"],
-                    ["male", "Male"],
-                  ]}
-                  onChange={(value) => updateField("sex", value as AssessmentForm["sex"])}
-                />
-              </div>
-            ) : null}
-
-            {step === 1 ? (
-              <div className="grid gap-5 md:grid-cols-2">
-                <NumberField
-                  label="Systolic blood pressure"
-                  value={form.systolicBp}
-                  min={80}
-                  max={220}
-                  unit="mmHg"
-                  helper="This is the upper number, for example 132 in 132/84."
-                  onChange={(value) => updateField("systolicBp", value)}
-                />
-                <NumberField
-                  label="Total cholesterol"
-                  value={form.cholesterol}
-                  min={120}
-                  max={360}
-                  unit="mg/dL"
-                  helper="If you only know mmol/L, your clinic report may show both units."
-                  onChange={(value) => updateField("cholesterol", value)}
-                />
-                <div className="md:col-span-2">
-                  <ChoiceGroup
-                    label="Blood glucose"
-                    value={form.glucose}
-                    options={[
-                      ["normal", "Normal"],
-                      ["borderline", "Borderline"],
-                      ["high", "High"],
-                    ]}
-                    onChange={(value) => updateField("glucose", value as AssessmentForm["glucose"])}
-                  />
-                </div>
-              </div>
-            ) : null}
-
-            {step === 2 ? (
-              <div className="grid gap-5">
-                <ChoiceGroup
-                  label="Smoking status"
-                  value={form.smoking}
-                  options={[
-                    ["no", "No"],
-                    ["former", "Former smoker"],
-                    ["yes", "Currently smoke"],
-                  ]}
-                  onChange={(value) => updateField("smoking", value as AssessmentForm["smoking"])}
-                />
-                <ChoiceGroup
-                  label="Weekly physical activity"
-                  value={form.activity}
-                  options={[
-                    ["low", "Low"],
-                    ["medium", "Some activity"],
-                    ["high", "Active"],
-                  ]}
-                  helper="Choose the closest answer. You do not need an exact exercise log."
-                  onChange={(value) => updateField("activity", value as AssessmentForm["activity"])}
-                />
-                <ChoiceGroup
-                  label="Family history of heart disease"
-                  value={form.familyHistory}
-                  options={[
-                    ["no", "No"],
-                    ["yes", "Yes"],
-                    ["unsure", "Not sure"],
-                  ]}
-                  onChange={(value) => updateField("familyHistory", value as AssessmentForm["familyHistory"])}
-                />
-                <ChoiceGroup
-                  label="Current symptoms"
-                  value={form.symptoms}
-                  options={[
-                    ["none", "No symptoms"],
-                    ["mild", "Mild concern"],
-                    ["urgent", "Chest pain or severe breathlessness"],
-                  ]}
-                  onChange={(value) => updateField("symptoms", value as AssessmentForm["symptoms"])}
-                />
-              </div>
-            ) : null}
-
-            {step === 3 ? (
-              <div className="grid gap-4">
-                <AssessmentReview form={form} />
-                <Notice tone="soft">
-                  Your result will be shown as an estimated risk for health awareness. It is not a medical diagnosis.
-                </Notice>
-                {hasUrgentSymptoms ? (
-                  <Notice tone="danger">
-                    You selected urgent symptoms. Please seek medical care promptly if you are experiencing chest pain, severe breathlessness, fainting, or worsening symptoms.
-                  </Notice>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={step === 0}
-              onClick={() => setStep(Math.max(0, step - 1))}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Back
-            </Button>
-            {isLastStep ? (
-              <Button type="button" onClick={onComplete}>
-                Generate risk result
-                <Save className="h-4 w-4" />
-              </Button>
-            ) : (
-              <Button type="button" onClick={() => setStep(Math.min(assessmentSteps.length - 1, step + 1))}>
-                Continue
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <CardHeader title="Live estimate preview" subtitle="Updates as the user fills the form" />
-          <div className="mt-6 grid justify-items-center gap-4 text-center">
-            <RiskGauge value={currentRisk} label={currentCategory.label} />
-            <StatusBadge tone={currentCategory.tone}>{currentCategory.label}</StatusBadge>
-            <p className="leading-7 text-slate-600">
-              This preview helps users understand that answers affect the score, while the final explanation appears after submission.
-            </p>
-          </div>
-          <Notice tone={hasUrgentSymptoms ? "danger" : "warning"}>
-            {hasUrgentSymptoms
-              ? "Urgent symptoms should be handled by medical services, not by this assessment alone."
-              : "Use recent clinic or home monitoring values if available. Estimates are less reliable when values are guessed."}
-          </Notice>
-        </Card>
-      </div>
-    </section>
-  );
-}
-
 function PlainLanguagePoint({ title, text }: { title: string; text: string }) {
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -855,116 +765,95 @@ function PlainLanguagePoint({ title, text }: { title: string; text: string }) {
   );
 }
 
-function NumberField({
-  label,
-  value,
-  min,
-  max,
-  unit,
-  helper,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  unit: string;
-  helper: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="block rounded-[20px] border border-slate-200 bg-slate-50 p-4">
-      <span className="text-sm font-semibold text-slate-700">{label}</span>
-      <div className="mt-3 flex items-center gap-3">
-        <input
-          className="form-input mt-0"
-          type="number"
-          min={min}
-          max={max}
-          value={value}
-          onChange={(event) => onChange(Number(event.target.value))}
-        />
-        <span className="w-16 text-sm font-semibold text-slate-500">{unit}</span>
-      </div>
-      <small className="mt-3 block leading-5 text-slate-500">{helper}</small>
-    </label>
-  );
-}
-
-function ChoiceGroup({
-  label,
-  value,
-  options,
-  helper,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: string[][];
-  helper?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <fieldset>
-      <legend className="text-sm font-semibold text-slate-700">{label}</legend>
-      {helper ? <p className="mt-1 text-sm text-slate-500">{helper}</p> : null}
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        {options.map(([optionValue, optionLabel]) => {
-          const selected = value === optionValue;
-
-          return (
-            <button
-              key={optionValue}
-              type="button"
-              onClick={() => onChange(optionValue)}
-              className={`min-h-16 rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${
-                selected
-                  ? "border-cyan-300 bg-cyan-50 text-cyan-900 ring-2 ring-cyan-100"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:bg-cyan-50"
-              }`}
-            >
-              <span className="flex items-center justify-between gap-3">
-                {optionLabel}
-                {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-700" /> : null}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
-
-function AssessmentReview({ form }: { form: AssessmentForm }) {
-  const rows = [
-    ["Age", `${form.age} years`],
-    ["Sex", form.sex === "female" ? "Female" : "Male"],
-    ["Systolic blood pressure", `${form.systolicBp} mmHg`],
-    ["Total cholesterol", `${form.cholesterol} mg/dL`],
-    ["Blood glucose", labelize(form.glucose)],
-    ["Smoking status", labelize(form.smoking)],
-    ["Physical activity", labelize(form.activity)],
-    ["Family history", labelize(form.familyHistory)],
-    ["Current symptoms", labelize(form.symptoms)],
-  ];
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {rows.map(([label, value]) => (
-        <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</span>
-          <strong className="mt-1 block text-slate-900">{value}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function labelize(value: string) {
   return value
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatDateTime(value?: string) {
+  if (!value) {
+    return "Unknown date";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function historyInputLabel(inputType?: string, exactValue?: number | null, category?: string | null, unit?: string) {
+  if (inputType === "exact" && exactValue != null) {
+    return `${exactValue} ${unit ?? ""}`.trim();
+  }
+  if (inputType === "category" && category) {
+    return labelize(category);
+  }
+  return "Not sure";
+}
+
+function AssessmentHistory({
+  items,
+  onStartAssessment,
+}: {
+  items: AssessmentHistoryItem[];
+  onStartAssessment: () => void;
+}) {
+  return (
+    <section className="grid gap-6">
+      <SectionTitle
+        label="Assessment history"
+        title="Previous patient risk estimates"
+        description="Saved assessments are listed here so users can track how their risk estimate and confidence changed over time."
+      />
+
+      <Card className="p-6">
+        {items.length === 0 ? (
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <h3 className="text-xl font-bold tracking-tight text-slate-950">No saved assessments yet</h3>
+              <p className="mt-2 leading-7 text-slate-600">
+                Complete the guided assessment to save your first result.
+              </p>
+            </div>
+            <Button onClick={onStartAssessment}>
+              Start assessment
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {items.map((item) => (
+              <article key={item.assessment_id} className="rounded-[20px] border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-bold tracking-tight text-slate-900">
+                        {Math.round(Number(item.risk_score ?? 0) * 1000) / 10}% estimated risk
+                      </h3>
+                      <StatusBadge tone={riskTone(item.risk_category)}>
+                        {riskLevelLabel(item.risk_category)}
+                      </StatusBadge>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-500">
+                      {formatDateTime(item.assessed_at ?? item.created_at)} · {labelize(item.confidence_level)} confidence
+                    </p>
+                  </div>
+                  <div className="grid gap-1 text-sm text-slate-600 md:text-right">
+                    <span>BP: {historyInputLabel(item.bp_input_type, item.systolic_bp, item.bp_category, "mmHg")}</span>
+                    <span>Cholesterol: {historyInputLabel(item.cholesterol_input_type, item.total_cholesterol, item.cholesterol_category, "mg/dL")}</span>
+                  </div>
+                </div>
+                {item.explanation?.[0] ? (
+                  <p className="mt-3 leading-7 text-slate-600">{item.explanation[0]}</p>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        )}
+      </Card>
+    </section>
+  );
 }
 
 function TopRiskFactors({

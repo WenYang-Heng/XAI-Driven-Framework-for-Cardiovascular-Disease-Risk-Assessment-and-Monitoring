@@ -9,10 +9,12 @@ export type RiskFactor = {
 export type AssessmentForm = {
   age: number;
   sex: "female" | "male";
-  bpKnown: "known" | "unknown";
+  bpInputType: "exact" | "category" | "unknown";
   systolicBp: number;
-  cholesterolKnown: "known" | "unknown";
+  bpCategory: "low" | "normal" | "elevated" | "stage_1" | "stage_2" | "crisis";
+  cholesterolInputType: "exact" | "category" | "unknown";
   cholesterol: number;
+  cholesterolCategory: "desirable" | "borderline" | "high";
   glucose: "normal" | "borderline" | "high";
   diabetes: "no" | "prediabetes" | "yes" | "unsure";
   smoking: "no" | "former" | "yes";
@@ -53,10 +55,12 @@ export const fallbackRiskFactors: RiskFactor[] = [
 export const initialAssessment: AssessmentForm = {
   age: 45,
   sex: "female",
-  bpKnown: "known",
+  bpInputType: "exact",
   systolicBp: 132,
-  cholesterolKnown: "known",
+  bpCategory: "stage_1",
+  cholesterolInputType: "exact",
   cholesterol: 210,
+  cholesterolCategory: "borderline",
   glucose: "normal",
   diabetes: "unsure",
   smoking: "no",
@@ -71,8 +75,8 @@ export function calculateDemoRisk(form: AssessmentForm) {
   let score = 4;
   score += Math.max(0, (form.age - 35) * 0.28);
   score += form.sex === "male" ? 1.8 : 0.8;
-  score += form.bpKnown === "known" ? Math.max(0, (form.systolicBp - 115) * 0.13) : 1.2;
-  score += form.cholesterolKnown === "known" ? Math.max(0, (form.cholesterol - 180) * 0.035) : 0.9;
+  score += form.bpInputType === "exact" ? Math.max(0, (form.systolicBp - 115) * 0.13) : 1.2;
+  score += form.cholesterolInputType === "exact" ? Math.max(0, (form.cholesterol - 180) * 0.035) : 0.9;
   score += form.glucose === "high" ? 3.3 : form.glucose === "borderline" ? 1.4 : 0;
   score += form.diabetes === "yes" ? 3.2 : form.diabetes === "prediabetes" ? 1.5 : form.diabetes === "unsure" ? 0.7 : 0;
   score += form.smoking === "yes" ? 4.4 : form.smoking === "former" ? 1.2 : 0;
@@ -88,7 +92,7 @@ export function calculateDemoRisk(form: AssessmentForm) {
 export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
   const factors: RiskFactor[] = [];
 
-  if (form.bpKnown === "known" && form.systolicBp >= 130) {
+  if (form.bpInputType === "exact" && form.systolicBp >= 130) {
     factors.push({
       name: "Blood Pressure",
       type: "Modifiable",
@@ -110,7 +114,7 @@ export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.cholesterolKnown === "known" && form.cholesterol >= 200) {
+  if (form.cholesterolInputType === "exact" && form.cholesterol >= 200) {
     factors.push({
       name: "Cholesterol",
       type: "Modifiable",
