@@ -31,13 +31,12 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
-  const generatedPlans = useMemo(() => buildPlans(riskFactors), [riskFactors]);
   const guidedPlan = useMemo(() => buildGuidedPlan(guidedForm), [guidedForm]);
   const plans = useMemo(
-    () => [...customPlans, ...(generatedActionPlan?.items ?? generatedPlans)],
-    [customPlans, generatedActionPlan, generatedPlans],
+    () => [...customPlans, ...(generatedActionPlan?.items ?? [])],
+    [customPlans, generatedActionPlan],
   );
-  const primaryPlan = plans[0];
+  const primaryPlan = plans[0] ?? null;
 
   const updateGuidedForm = <Key extends keyof GuidedPlanForm>(
     key: Key,
@@ -159,7 +158,7 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
       <div className="grid gap-4 md:grid-cols-3">
         <PlanMetric icon={HeartPulse} label="Risk category" value={currentCategory.label} tone={currentCategory.tone} />
         <PlanMetric icon={ListChecks} label="Total actions" value={plans.length.toString()} tone="cyan" />
-        <PlanMetric icon={TrendingDown} label="Focus area" value={primaryPlan.factor} tone="green" />
+        <PlanMetric icon={TrendingDown} label="Focus area" value={primaryPlan?.factor ?? "Pending"} tone="green" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.35fr_0.75fr]">
@@ -169,15 +168,24 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
             <Badge tone={currentCategory.tone}>Based on {currentCategory.label}</Badge>
           </div>
 
-          <div className="grid gap-4">
-            {plans.map((plan, index) => (
-              <PlanCard
-                key={`${plan.title}-${index}`}
-                index={index + 1}
-                plan={plan}
-              />
-            ))}
-          </div>
+          {plans.length > 0 ? (
+            <div className="grid gap-4">
+              {plans.map((plan, index) => (
+                <PlanCard
+                  key={`${plan.title}-${index}`}
+                  index={index + 1}
+                  plan={plan}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-6">
+              <h3 className="font-bold tracking-tight text-slate-950">No action plan generated yet</h3>
+              <p className="mt-3 leading-7 text-slate-600">
+                Generate an action plan from your latest saved assessment to see specific examples, next steps, barriers, and measures.
+              </p>
+            </div>
+          )}
         </Card>
 
         <div className="grid gap-6">

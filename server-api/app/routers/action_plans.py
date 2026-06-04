@@ -17,5 +17,7 @@ async def generate_action_plan(request: ActionPlanGenerateRequest) -> dict:
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"Unable to generate action plan: {error}") from error
 
     return {"action_plan": action_plan}
