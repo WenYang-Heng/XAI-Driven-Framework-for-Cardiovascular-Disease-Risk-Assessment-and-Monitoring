@@ -18,6 +18,7 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { API_BASE_URL } from "../domain-expert/constants";
+import { AssessmentHistoryPage, type AssessmentHistoryItem } from "./assessment-history/AssessmentHistoryPage";
 import { RiskAssessment as PatientRiskAssessment } from "./assessment/RiskAssessment";
 import { ReminderSummary, RemindersPage } from "./reminders/RemindersPage";
 import { SimulatorPage } from "./simulator/SimulatorPage";
@@ -91,22 +92,6 @@ type PatientPrediction = {
   };
   missing_inputs: string[];
   explanation: string[];
-};
-
-type AssessmentHistoryItem = {
-  assessment_id: string;
-  created_at?: string;
-  assessed_at?: string;
-  risk_score: number;
-  risk_category: "low" | "moderate" | "high";
-  confidence_level: "low" | "medium" | "high";
-  bp_input_type?: string;
-  systolic_bp?: number | null;
-  bp_category?: string | null;
-  cholesterol_input_type?: string;
-  total_cholesterol?: number | null;
-  cholesterol_category?: string | null;
-  explanation?: string[];
 };
 
 type CurrentUser = {
@@ -329,23 +314,6 @@ async function loadAssessmentHistory(userId: string): Promise<AssessmentHistoryI
   return data.items ?? [];
 }
 
-function riskLevelLabel(level?: string) {
-  if (!level) {
-    return "Pending";
-  }
-  return `${level.charAt(0).toUpperCase()}${level.slice(1)} Risk`;
-}
-
-function riskTone(level?: string): StatusTone {
-  if (level === "high") {
-    return "red";
-  }
-  if (level === "moderate") {
-    return "amber";
-  }
-  return "green";
-}
-
 export function PatientDashboard({ currentUser, onLogout }: { currentUser?: CurrentUser | null; onLogout?: () => void }) {
   const [activePage, setActivePage] = useState<PatientTab>("dashboard");
   const [assessmentStep, setAssessmentStep] = useState(0);
@@ -455,7 +423,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
             />
           ) : null}
           {activePage === "history" ? (
-            <AssessmentHistory items={assessmentHistory} onStartAssessment={() => setActivePage("assessment")} />
+            <AssessmentHistoryPage items={assessmentHistory} onStartAssessment={() => setActivePage("assessment")} />
           ) : null}
           {activePage === "action" ? <ActionPlan /> : null}
           {activePage === "simulator" ? (
@@ -762,97 +730,6 @@ function PlainLanguagePoint({ title, text }: { title: string; text: string }) {
       </h3>
       <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
     </article>
-  );
-}
-
-function labelize(value: string) {
-  return value
-    .split("-")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function formatDateTime(value?: string) {
-  if (!value) {
-    return "Unknown date";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function historyInputLabel(inputType?: string, exactValue?: number | null, category?: string | null, unit?: string) {
-  if (inputType === "exact" && exactValue != null) {
-    return `${exactValue} ${unit ?? ""}`.trim();
-  }
-  if (inputType === "category" && category) {
-    return labelize(category);
-  }
-  return "Not sure";
-}
-
-function AssessmentHistory({
-  items,
-  onStartAssessment,
-}: {
-  items: AssessmentHistoryItem[];
-  onStartAssessment: () => void;
-}) {
-  return (
-    <section className="grid gap-6">
-      <SectionTitle
-        label="Assessment history"
-        title="Previous patient risk estimates"
-        description="Saved assessments are listed here so users can track how their risk estimate and confidence changed over time."
-      />
-
-      <Card className="p-6">
-        {items.length === 0 ? (
-          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-            <div>
-              <h3 className="text-xl font-bold tracking-tight text-slate-950">No saved assessments yet</h3>
-              <p className="mt-2 leading-7 text-slate-600">
-                Complete the guided assessment to save your first result.
-              </p>
-            </div>
-            <Button onClick={onStartAssessment}>
-              Start assessment
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </div>
-        ) : (
-          <div className="grid gap-4">
-            {items.map((item) => (
-              <article key={item.assessment_id} className="rounded-[20px] border border-slate-200 bg-white p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-bold tracking-tight text-slate-900">
-                        {Math.round(Number(item.risk_score ?? 0) * 1000) / 10}% estimated risk
-                      </h3>
-                      <StatusBadge tone={riskTone(item.risk_category)}>
-                        {riskLevelLabel(item.risk_category)}
-                      </StatusBadge>
-                    </div>
-                    <p className="mt-2 text-sm text-slate-500">
-                      {formatDateTime(item.assessed_at ?? item.created_at)} · {labelize(item.confidence_level)} confidence
-                    </p>
-                  </div>
-                  <div className="grid gap-1 text-sm text-slate-600 md:text-right">
-                    <span>BP: {historyInputLabel(item.bp_input_type, item.systolic_bp, item.bp_category, "mmHg")}</span>
-                    <span>Cholesterol: {historyInputLabel(item.cholesterol_input_type, item.total_cholesterol, item.cholesterol_category, "mg/dL")}</span>
-                  </div>
-                </div>
-                {item.explanation?.[0] ? (
-                  <p className="mt-3 leading-7 text-slate-600">{item.explanation[0]}</p>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        )}
-      </Card>
-    </section>
   );
 }
 
