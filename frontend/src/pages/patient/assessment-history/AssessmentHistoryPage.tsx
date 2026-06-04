@@ -13,6 +13,7 @@ export type AssessmentHistoryItem = {
   risk_score: number;
   risk_category: "low" | "moderate" | "high";
   confidence_level: "low" | "medium" | "high";
+  prediction_method?: string;
   bp_input_type?: string;
   systolic_bp?: number | null;
   bp_category?: string | null;
@@ -27,12 +28,6 @@ type AssessmentHistoryPageProps = {
   onStartAssessment: () => void;
 };
 
-const confidenceScores = {
-  low: 1,
-  medium: 2,
-  high: 3,
-};
-
 export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHistoryPageProps) {
   const sortedItems = [...items].sort(
     (a, b) =>
@@ -41,9 +36,8 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
   );
   const chartData = sortedItems.map((item, index) => ({
     label: formatShortDate(item.assessed_at ?? item.created_at),
-    confidence: confidenceScores[item.confidence_level],
-    confidenceLabel: labelize(item.confidence_level),
     risk: Math.round(Number(item.risk_score ?? 0) * 1000) / 10,
+    category: riskLevelLabel(item.risk_category),
     index: index + 1,
   }));
 
@@ -52,7 +46,7 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
       <SectionTitle
         label="Assessment history"
         title="Previous patient risk estimates"
-        description="Saved assessments are shown as a confidence trend and a detailed table for comparison."
+        description="Saved assessments are shown as a risk-score trend and a detailed table for comparison."
       />
 
       {items.length === 0 ? (
@@ -74,8 +68,8 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
         <>
           <Card className="p-6">
             <CardHeader
-              title="Confidence trend"
-              subtitle="Higher values mean the assessment had more exact or complete inputs."
+              title="Risk score trend"
+              subtitle="Track how the estimated risk percentage changes across saved assessments."
             />
             <div className="mt-5 h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -83,16 +77,15 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
                   <CartesianGrid stroke="#e2e8f0" strokeDasharray="4 4" />
                   <XAxis dataKey="label" tick={{ fill: "#64748b", fontSize: 12 }} />
                   <YAxis
-                    domain={[1, 3]}
-                    ticks={[1, 2, 3]}
-                    tickFormatter={confidenceTick}
+                    domain={[0, 100]}
+                    tickFormatter={(value) => `${value}%`}
                     tick={{ fill: "#64748b", fontSize: 12 }}
-                    width={76}
+                    width={56}
                   />
                   <Tooltip
                     formatter={(value, name, props) =>
-                      name === "confidence"
-                        ? [props.payload.confidenceLabel, "Confidence"]
+                      name === "risk"
+                        ? [`${value}%`, props.payload.category]
                         : [value, name]
                     }
                     labelFormatter={(_, payload) =>
@@ -101,7 +94,7 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
                   />
                   <Line
                     type="monotone"
-                    dataKey="confidence"
+                    dataKey="risk"
                     stroke="#0891b2"
                     strokeWidth={3}
                     dot={{ r: 4, strokeWidth: 2, fill: "#ffffff" }}
@@ -113,50 +106,38 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
           </Card>
 
           <Card className="p-6">
-            <CardHeader title="Assessment records" subtitle="Compare risk, confidence, and the values used." />
-            <div className="mt-5 overflow-x-auto">
-              <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-                <thead>
-                  <tr className="text-xs uppercase text-slate-500">
-                    <th className="border-b border-slate-200 px-4 py-3 font-bold">Date</th>
-                    <th className="border-b border-slate-200 px-4 py-3 font-bold">Risk</th>
-                    <th className="border-b border-slate-200 px-4 py-3 font-bold">Confidence</th>
-                    <th className="border-b border-slate-200 px-4 py-3 font-bold">Blood pressure</th>
-                    <th className="border-b border-slate-200 px-4 py-3 font-bold">Cholesterol</th>
-                    <th className="border-b border-slate-200 px-4 py-3 font-bold">Summary</th>
+            <CardHeader title="Assessment records" subtitle="Compare saved patient assessment results." />
+            <div className="mt-5 overflow-hidden rounded-[20px] border border-slate-200">
+              <table className="w-full min-w-[900px] border-collapse bg-white text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th className="px-5 py-4 font-bold">Date</th>
+                    <th className="px-5 py-4 font-bold">Risk Score</th>
+                    <th className="px-5 py-4 font-bold">Risk Category</th>
+                    <th className="px-5 py-4 font-bold">Confidence</th>
+                    <th className="px-5 py-4 font-bold">Method</th>
+                    <th className="px-5 py-4 font-bold">Summary</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100">
                   {[...items].map((item) => (
-                    <tr key={item.assessment_id} className="align-top">
-                      <td className="border-b border-slate-100 px-4 py-4 text-slate-600">
+                    <tr key={item.assessment_id} className="align-top hover:bg-slate-50/70">
+                      <td className="px-5 py-4 text-slate-600">
                         {formatDateTime(item.assessed_at ?? item.created_at)}
                       </td>
-                      <td className="border-b border-slate-100 px-4 py-4">
-                        <div className="grid gap-2">
-                          <strong className="text-slate-950">
-                            {Math.round(Number(item.risk_score ?? 0) * 1000) / 10}%
-                          </strong>
-                          <Badge tone={riskTone(item.risk_category)}>{riskLevelLabel(item.risk_category)}</Badge>
-                        </div>
+                      <td className="px-5 py-4 font-semibold text-slate-950">
+                        {Math.round(Number(item.risk_score ?? 0) * 1000) / 10}%
                       </td>
-                      <td className="border-b border-slate-100 px-4 py-4">
-                        <Badge tone={confidenceTone(item.confidence_level)}>
-                          {labelize(item.confidence_level)}
-                        </Badge>
+                      <td className="px-5 py-4">
+                        <Badge tone={riskTone(item.risk_category)}>{riskLevelLabel(item.risk_category)}</Badge>
                       </td>
-                      <td className="border-b border-slate-100 px-4 py-4 text-slate-600">
-                        {historyInputLabel(item.bp_input_type, item.systolic_bp, item.bp_category, "mmHg")}
+                      <td className="px-5 py-4">
+                        <Badge tone={confidenceTone(item.confidence_level)}>{labelize(item.confidence_level)}</Badge>
                       </td>
-                      <td className="border-b border-slate-100 px-4 py-4 text-slate-600">
-                        {historyInputLabel(
-                          item.cholesterol_input_type,
-                          item.total_cholesterol,
-                          item.cholesterol_category,
-                          "mg/dL",
-                        )}
+                      <td className="px-5 py-4 text-slate-600">
+                        {methodLabel(item.prediction_method)}
                       </td>
-                      <td className="max-w-md border-b border-slate-100 px-4 py-4 leading-6 text-slate-600">
+                      <td className="max-w-lg px-5 py-4 leading-6 text-slate-600">
                         {item.explanation?.[0] ?? "No explanation saved."}
                       </td>
                     </tr>
@@ -169,10 +150,6 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
       )}
     </section>
   );
-}
-
-function confidenceTick(value: number) {
-  return value === 3 ? "High" : value === 2 ? "Medium" : "Low";
 }
 
 function confidenceTone(level: string): "green" | "amber" | "red" {
@@ -233,14 +210,14 @@ function formatShortDate(value?: string) {
   }).format(new Date(value));
 }
 
-function historyInputLabel(inputType?: string, exactValue?: number | null, category?: string | null, unit?: string) {
-  if (inputType === "exact" && exactValue != null) {
-    return `${exactValue} ${unit ?? ""}`.trim();
+function methodLabel(value?: string) {
+  if (!value) {
+    return "Patient screening";
   }
-  if (inputType === "category" && category) {
-    return labelize(category);
+  if (value.includes("simulation")) {
+    return "Lifestyle simulation";
   }
-  return "Not sure";
+  return "Patient screening";
 }
 
 function SectionTitle({
