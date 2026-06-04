@@ -14,9 +14,17 @@ import type { LucideIcon } from "lucide-react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
+import { API_BASE_URL } from "../domain-expert/constants";
+import { supabase, supabaseConfigured } from "../../lib/supabase";
 
 type AuthMode = "login" | "register";
-type UserRole = "general-user" | "domain-expert" | "admin";
+export type UserRole = "general-user" | "domain-expert" | "admin";
+export type AuthenticatedUser = {
+  id: string;
+  email: string;
+  fullName?: string;
+  role: UserRole;
+};
 
 const roleOptions: {
   id: UserRole;
@@ -47,10 +55,17 @@ const roleOptions: {
 export function AuthPage({
   onAuthenticated,
 }: {
-  onAuthenticated?: (role: UserRole) => void;
+  onAuthenticated?: (role: UserRole, user: AuthenticatedUser) => void;
 }) {
   const [mode, setMode] = useState<AuthMode>("login");
   const [role, setRole] = useState<UserRole>("general-user");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const isRegister = mode === "register";
 
@@ -81,12 +96,20 @@ export function AuthPage({
                 <AuthTab
                   active={mode === "login"}
                   label="Login"
-                  onClick={() => setMode("login")}
+                  onClick={() => {
+                    setMode("login");
+                    setError(null);
+                    setNotice(null);
+                  }}
                 />
                 <AuthTab
                   active={mode === "register"}
                   label="Register"
-                  onClick={() => setMode("register")}
+                  onClick={() => {
+                    setMode("register");
+                    setError(null);
+                    setNotice(null);
+                  }}
                 />
               </div>
 
@@ -155,6 +178,8 @@ export function AuthPage({
                     type="text"
                     placeholder="Dr. Amina Rahman"
                     icon={User}
+                    value={fullName}
+                    onChange={setFullName}
                   />
                 ) : null}
                 <AuthField
@@ -162,12 +187,16 @@ export function AuthPage({
                   type="email"
                   placeholder="name@cardioxai.org"
                   icon={Mail}
+                  value={email}
+                  onChange={setEmail}
                 />
                 <AuthField
                   label="Password"
                   type="password"
                   placeholder="Enter your password"
                   icon={Lock}
+                  value={password}
+                  onChange={setPassword}
                 />
                 {isRegister ? (
                   <AuthField
@@ -175,6 +204,8 @@ export function AuthPage({
                     type="password"
                     placeholder="Re-enter your password"
                     icon={Lock}
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
                   />
                 ) : null}
 
@@ -196,12 +227,50 @@ export function AuthPage({
                   ) : null}
                 </div>
 
+                {error ? (
+                  <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+                    {error}
+                  </p>
+                ) : null}
+                {notice ? (
+                  <p className="rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-800">
+                    {notice}
+                  </p>
+                ) : null}
+
                 <Button
                   className="mt-2 w-full"
                   type="button"
-                  onClick={() => onAuthenticated?.(role)}
+                  disabled={isLoading}
+                  onClick={async () => {
+                    setIsLoading(true);
+                    setError(null);
+                    setNotice(null);
+                    try {
+                      const result = await authenticate({
+                        mode,
+                        role,
+                        fullName,
+                        email,
+                        password,
+                        confirmPassword,
+                      });
+                      if (result.status === "confirmation_required") {
+                        setNotice(result.message);
+                        setMode("login");
+                        setPassword("");
+                        setConfirmPassword("");
+                        return;
+                      }
+                      onAuthenticated?.(result.user.role, result.user);
+                    } catch (authError) {
+                      setError(authError instanceof Error ? authError.message : "Authentication failed.");
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
                 >
-                  {isRegister ? "Create Account" : "Login"}
+                  {isLoading ? "Working..." : isRegister ? "Create Account" : "Login"}
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </form>
@@ -257,11 +326,15 @@ function AuthField({
   type,
   placeholder,
   icon: Icon,
+  value,
+  onChange,
 }: {
   label: string;
   type: string;
   placeholder: string;
   icon: LucideIcon;
+  value: string;
+  onChange: (value: string) => void;
 }) {
   return (
     <label className="block">
@@ -272,8 +345,153 @@ function AuthField({
           className="min-h-11 w-full bg-transparent text-sm font-medium text-slate-900 outline-none placeholder:text-slate-400"
           type={type}
           placeholder={placeholder}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
         />
       </div>
     </label>
   );
+}
+
+async function authenticate({
+  mode,
+  role,
+  fullName,
+  email,
+  password,
+  confirmPassword,
+}: {
+  mode: AuthMode;
+  role: UserRole;
+  fullName: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+}): Promise<
+  | { status: "authenticated"; user: AuthenticatedUser }
+  | { status: "confirmation_required"; message: string }
+> {
+  if (!supabaseConfigured || !supabase) {
+    throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
+  }
+
+  if (!email || !password) {
+    throw new Error("Enter your email and password.");
+  }
+
+  if (mode === "register" && password !== confirmPassword) {
+    throw new Error("Passwords do not match.");
+  }
+
+  const dbRole = role === "admin" ? "ADMIN" : role === "domain-expert" ? "DOMAIN_EXPERT" : "PATIENT";
+  if (mode === "register") {
+    const authResponse = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          full_name: fullName,
+          role: dbRole,
+        },
+      },
+    });
+
+    if (authResponse.error) {
+      throw authResponse.error;
+    }
+
+    const user = authResponse.data.user;
+    if (user) {
+      try {
+        await upsertProfile({
+          userId: user.id,
+          fullName: fullName || email,
+          email: user.email ?? email,
+          role: dbRole,
+        });
+      } catch {
+        // Registration should still show the confirmation prompt. The profile
+        // can be repaired on first confirmed login.
+      }
+    }
+
+    return {
+      status: "confirmation_required",
+      message: "Account created. Please check your email and confirm your account before logging in.",
+    };
+  }
+
+  const authResponse = await supabase.auth.signInWithPassword({ email, password });
+  if (authResponse.error) {
+    throw authResponse.error;
+  }
+
+  const user = authResponse.data.user;
+  if (!user) {
+    throw new Error("No Supabase user was returned. Check your email verification status.");
+  }
+
+  let profile = await loadProfile(user.id);
+  if (!profile) {
+    await upsertProfile({
+      userId: user.id,
+      fullName: user.user_metadata?.full_name ?? email,
+      email: user.email ?? email,
+      role: user.user_metadata?.role ?? dbRole,
+    });
+    profile = await loadProfile(user.id);
+  }
+  const roleFromProfile = profile?.role ?? user.user_metadata?.role ?? dbRole;
+  const appRole =
+    roleFromProfile === "ADMIN"
+      ? "admin"
+      : roleFromProfile === "DOMAIN_EXPERT"
+        ? "domain-expert"
+        : "general-user";
+
+  return {
+    status: "authenticated",
+    user: {
+      id: user.id,
+      email: user.email ?? email,
+      fullName: profile?.full_name ?? user.user_metadata?.full_name,
+      role: appRole,
+    },
+  };
+}
+
+async function upsertProfile({
+  userId,
+  fullName,
+  email,
+  role,
+}: {
+  userId: string;
+  fullName: string;
+  email: string;
+  role: string;
+}) {
+  const profileResponse = await fetch(`${API_BASE_URL}/api/profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: userId,
+      full_name: fullName,
+      email,
+      role,
+    }),
+  });
+
+  if (!profileResponse.ok) {
+    throw new Error("Profile setup failed. Check server-api and Supabase database connection.");
+  }
+}
+
+async function loadProfile(userId: string): Promise<{ role?: string; full_name?: string } | null> {
+  const response = await fetch(`${API_BASE_URL}/api/profile/${userId}`);
+  if (!response.ok) {
+    return null;
+  }
+  const data = (await response.json()) as { profile?: { role?: string; full_name?: string } };
+  return data.profile ?? null;
 }
