@@ -16,6 +16,8 @@ export type RiskFactor = {
 export type ActionPlanPageProps = {
   currentCategory: RiskCategory;
   riskFactors: RiskFactor[];
+  userId?: string;
+  assessmentId?: string | null;
 };
 
 export type PlanItem = {
@@ -28,6 +30,17 @@ export type PlanItem = {
   nextStep: string;
   barrier: string;
   measure: string;
+  specificExamples?: string[];
+  status?: string;
+};
+
+export type GeneratedActionPlan = {
+  action_plan_id: string;
+  title: string;
+  summary: string;
+  generated_by: "ai_assisted" | "rule_based";
+  ai_model?: string | null;
+  items: PlanItem[];
 };
 
 export type GuidedPlanForm = {

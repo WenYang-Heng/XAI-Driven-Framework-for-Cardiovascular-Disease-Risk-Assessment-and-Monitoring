@@ -35,9 +35,21 @@ export function PlanCard({ index, plan }: PlanCardProps) {
         <PlanDetail icon={ClipboardCheck} label="Measure" text={plan.measure} />
       </div>
 
+      {plan.specificExamples?.length ? (
+        <div className="mt-5 rounded-2xl bg-cyan-50 p-4">
+          <span className="text-sm font-semibold text-cyan-950">Specific examples</span>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {plan.specificExamples.map((example) => (
+              <Badge key={example} tone="cyan">{example}</Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm font-semibold text-slate-500">
           Focus: {plan.factor} - {plan.timeframe}
+          {plan.status ? ` - Status: ${plan.status.split("_").join(" ")}` : ""}
         </span>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" className="min-h-10 px-4 py-2 text-sm">

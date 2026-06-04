@@ -18,6 +18,7 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { API_BASE_URL } from "../domain-expert/constants";
+import { ActionPlanPage, ActionPlanSummary } from "./action-plan/ActionPlanPage";
 import { AssessmentHistoryPage, type AssessmentHistoryItem } from "./assessment-history/AssessmentHistoryPage";
 import { RiskAssessment as PatientRiskAssessment } from "./assessment/RiskAssessment";
 import { ReminderSummary, RemindersPage } from "./reminders/RemindersPage";
@@ -53,13 +54,6 @@ type RiskFactor = {
   impact: string;
   description: string;
   action: string;
-};
-
-type ActionPlanItem = {
-  title: string;
-  priority: string;
-  factor: string;
-  reason: string;
 };
 
 type AssessmentForm = {
@@ -135,30 +129,6 @@ const riskFactors: RiskFactor[] = [
     description:
       "Age is considered because cardiovascular risk usually increases over time.",
     action: "Focus on modifiable factors such as activity, smoking, blood pressure, and monitoring.",
-  },
-];
-
-const actionPlans: ActionPlanItem[] = [
-  {
-    title: "Reduce daily salt intake",
-    priority: "High Priority",
-    factor: "High Blood Pressure",
-    reason:
-      "Recommended because blood pressure is one of your top modifiable risk factors.",
-  },
-  {
-    title: "Walk 30 minutes, 5 days per week",
-    priority: "High Priority",
-    factor: "Low Physical Activity",
-    reason:
-      "Recommended to improve activity level gradually without setting an unrealistic target.",
-  },
-  {
-    title: "Replace sugary drinks with water",
-    priority: "Medium Priority",
-    factor: "Weight and lifestyle habit",
-    reason:
-      "Recommended to support healthier daily habits and long-term risk management.",
   },
 ];
 
@@ -320,6 +290,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
   const [assessment, setAssessment] = useState<AssessmentForm>(initialAssessment);
   const [hasAssessment, setHasAssessment] = useState(false);
   const [latestPrediction, setLatestPrediction] = useState<PatientPrediction | null>(null);
+  const [latestAssessmentId, setLatestAssessmentId] = useState<string | null>(null);
   const [assessmentHistory, setAssessmentHistory] = useState<AssessmentHistoryItem[]>([]);
   const [assessmentError, setAssessmentError] = useState<string | null>(null);
   const [isAssessmentLoading, setIsAssessmentLoading] = useState(false);
@@ -368,6 +339,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
 
       const data = await response.json();
       setLatestPrediction(data.prediction);
+      setLatestAssessmentId(data.assessment_id);
       setHasAssessment(true);
       setAssessmentHistory(await loadAssessmentHistory(userId));
       setActivePage("risk");
@@ -425,7 +397,14 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
           {activePage === "history" ? (
             <AssessmentHistoryPage items={assessmentHistory} onStartAssessment={() => setActivePage("assessment")} />
           ) : null}
-          {activePage === "action" ? <ActionPlan /> : null}
+          {activePage === "action" ? (
+            <ActionPlanPage
+              currentCategory={currentCategory}
+              riskFactors={personalizedRiskFactors}
+              userId={userId}
+              assessmentId={latestAssessmentId ?? assessmentHistory[0]?.assessment_id ?? null}
+            />
+          ) : null}
           {activePage === "simulator" ? (
             <SimulatorPage currentRisk={currentRisk} currentCategory={currentCategory} />
           ) : null}
@@ -651,7 +630,7 @@ function Dashboard({
 
       <div className="grid gap-6 xl:grid-cols-2">
         <TopRiskFactors compact factors={riskFactors} />
-        <ActionPlan compact />
+        <ActionPlanSummary riskFactors={riskFactors} />
         <ReminderSummary />
       </div>
     </section>
@@ -774,54 +753,6 @@ function TopRiskFactors({
         ))}
       </div>
     </Card>
-  );
-}
-
-function ActionPlan({ compact = false }: { compact?: boolean }) {
-  return (
-    <section className={compact ? "" : "grid gap-6"}>
-      {!compact ? (
-        <SectionTitle
-          label="Lifestyle recommendation module"
-          title="Personalized action plan"
-          description="Recommended actions are prioritized based on your risk category and top modifiable risk factors."
-        />
-      ) : null}
-
-      <Card className="p-6">
-        {compact ? (
-          <div className="mb-5 flex items-start justify-between gap-4">
-            <CardHeader title="Action plan" subtitle="Recommended actions" />
-            <Button variant="ghost">View all</Button>
-          </div>
-        ) : null}
-
-        <div className={`grid gap-4 ${compact ? "" : "xl:grid-cols-3"}`}>
-          {actionPlans.map((plan, index) => (
-            <article key={plan.title} className="flex gap-4 rounded-[20px] border border-slate-200 bg-white p-4">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-cyan-50 font-bold text-cyan-700">
-                {index + 1}
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <h3 className="font-bold tracking-tight text-slate-900">{plan.title}</h3>
-                  <Tag tone="amber">{plan.priority}</Tag>
-                </div>
-                <p className="mt-3 leading-7 text-slate-600">{plan.reason}</p>
-                {!compact ? (
-                  <div className="mt-5 flex flex-col gap-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-                    <span>Related factor: {plan.factor}</span>
-                    <Button variant="secondary" className="min-h-10 px-4 py-2 text-sm">
-                      Convert to goal
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            </article>
-          ))}
-        </div>
-      </Card>
-    </section>
   );
 }
 

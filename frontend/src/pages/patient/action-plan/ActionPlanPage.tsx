@@ -11,6 +11,7 @@ import type { LucideIcon } from "lucide-react";
 import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader } from "../../../components/ui/Card";
+import { generateActionPlan } from "./actionPlanApi";
 import {
   buildGuidedPlan,
   buildPlans,
@@ -18,20 +19,23 @@ import {
 } from "./actionPlanGenerator";
 import { GuidedActionBuilder } from "./GuidedActionBuilder";
 import { ActionPlanSummary as SummaryCard, PlanCard } from "./PlanCard";
-import type { ActionPlanPageProps, GuidedPlanForm, PlanItem, RiskFactor } from "./types";
+import type { ActionPlanPageProps, GeneratedActionPlan, GuidedPlanForm, PlanItem, RiskFactor } from "./types";
 
 type ActionView = "overview" | "create";
 
-export function ActionPlanPage({ currentCategory, riskFactors }: ActionPlanPageProps) {
+export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmentId }: ActionPlanPageProps) {
   const [view, setView] = useState<ActionView>("overview");
   const [customPlans, setCustomPlans] = useState<PlanItem[]>([]);
   const [guidedForm, setGuidedForm] = useState<GuidedPlanForm>(initialGuidedPlan);
+  const [generatedActionPlan, setGeneratedActionPlan] = useState<GeneratedActionPlan | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   const generatedPlans = useMemo(() => buildPlans(riskFactors), [riskFactors]);
   const guidedPlan = useMemo(() => buildGuidedPlan(guidedForm), [guidedForm]);
   const plans = useMemo(
-    () => [...customPlans, ...generatedPlans],
-    [customPlans, generatedPlans],
+    () => [...customPlans, ...(generatedActionPlan?.items ?? generatedPlans)],
+    [customPlans, generatedActionPlan, generatedPlans],
   );
   const primaryPlan = plans[0];
 
@@ -46,6 +50,24 @@ export function ActionPlanPage({ currentCategory, riskFactors }: ActionPlanPageP
     setCustomPlans((current) => [guidedPlan, ...current]);
     setView("overview");
   };
+
+  async function handleGenerateActionPlan(regenerate = false) {
+    if (!userId || !assessmentId) {
+      setGenerationError("Complete and save an assessment before generating an action plan.");
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationError(null);
+    try {
+      const data = await generateActionPlan({ assessmentId, userId, regenerate });
+      setGeneratedActionPlan(mapGeneratedActionPlan(data.action_plan));
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : "Unable to generate action plan.");
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
   if (view === "create") {
     return (
@@ -97,6 +119,43 @@ export function ActionPlanPage({ currentCategory, riskFactors }: ActionPlanPageP
         </Button>
       </div>
 
+      <Card className="p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-lg font-bold tracking-tight text-slate-950">
+              AI-assisted action plan
+            </h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Generate specific examples and practical next steps from the latest saved assessment.
+            </p>
+            {generatedActionPlan ? (
+              <p className="mt-2 text-sm font-semibold text-cyan-700">
+                {generatedActionPlan.generated_by === "ai_assisted" ? "AI-assisted" : "Rule-based fallback"} plan loaded.
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button disabled={isGenerating || !assessmentId} onClick={() => handleGenerateActionPlan(false)}>
+              {isGenerating ? "Generating..." : "Generate Action Plan"}
+            </Button>
+            <Button variant="secondary" disabled={isGenerating || !assessmentId} onClick={() => handleGenerateActionPlan(true)}>
+              Regenerate
+            </Button>
+          </div>
+        </div>
+        {generationError ? (
+          <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm leading-6 text-red-700">
+            {generationError}
+          </div>
+        ) : null}
+        {generatedActionPlan ? (
+          <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
+            <strong className="text-cyan-950">{generatedActionPlan.title}</strong>
+            <span className="mt-1 block">{generatedActionPlan.summary}</span>
+          </div>
+        ) : null}
+      </Card>
+
       <div className="grid gap-4 md:grid-cols-3">
         <PlanMetric icon={HeartPulse} label="Risk category" value={currentCategory.label} tone={currentCategory.tone} />
         <PlanMetric icon={ListChecks} label="Total actions" value={plans.length.toString()} tone="cyan" />
@@ -127,6 +186,41 @@ export function ActionPlanPage({ currentCategory, riskFactors }: ActionPlanPageP
       </div>
     </section>
   );
+}
+
+function mapGeneratedActionPlan(rawPlan: any): GeneratedActionPlan {
+  return {
+    action_plan_id: rawPlan.action_plan_id,
+    title: rawPlan.title,
+    summary: rawPlan.summary,
+    generated_by: rawPlan.generated_by,
+    ai_model: rawPlan.ai_model,
+    items: (rawPlan.items ?? []).map((item: any): PlanItem => ({
+      title: item.title,
+      priority: priorityLabel(item.priority),
+      factor: item.factor,
+      timeframe: item.timeframe,
+      difficulty: difficultyLabel(item.difficulty),
+      reason: item.reason,
+      nextStep: item.next_step,
+      barrier: item.barrier_plan,
+      measure: item.measure,
+      specificExamples: item.specific_examples ?? [],
+      status: item.status,
+    })),
+  };
+}
+
+function priorityLabel(value: string): PlanItem["priority"] {
+  if (value === "high") return "High Priority";
+  if (value === "medium") return "Medium Priority";
+  return "Supportive";
+}
+
+function difficultyLabel(value: string): PlanItem["difficulty"] {
+  if (value === "hard") return "Challenging";
+  if (value === "moderate") return "Moderate";
+  return "Easy";
 }
 
 export function ActionPlanSummary({ riskFactors }: { riskFactors: RiskFactor[] }) {
