@@ -564,6 +564,59 @@ async def save_patient_assessment(request_payload: dict[str, Any], prediction: d
     return assessment_id, assessment_input_id
 
 
+def patient_assessment_history(user_id: str) -> list[dict[str, Any]]:
+    if database_enabled():
+        return _query_database(
+            """
+            select
+              a.assessment_id,
+              ai.assessment_input_id,
+              a.assessed_at,
+              a.created_at,
+              a.risk_score,
+              a.risk_category,
+              a.confidence_level,
+              a.prediction_method,
+              a.estimated_inputs,
+              a.missing_inputs,
+              a.explanation,
+              ai.age,
+              ai.sex,
+              ai.bp_input_type,
+              ai.systolic_bp,
+              ai.bp_category,
+              ai.cholesterol_input_type,
+              ai.total_cholesterol,
+              ai.cholesterol_category,
+              ai.diabetes_history,
+              ai.smoking_status,
+              ai.activity_level,
+              ai.weight,
+              ai.weight_category
+            from public.assessments a
+            left join public.assessments_input ai on ai.assessment_id = a.assessment_id
+            where a.user_id = %(user_id)s
+            order by a.created_at desc
+            """,
+            {"user_id": user_id},
+        )
+
+    items = []
+    for assessment in _assessments:
+        if assessment.get("user_id") != user_id:
+            continue
+        assessment_input = next(
+            (
+                item
+                for item in _assessment_inputs
+                if item.get("assessment_id") == assessment.get("assessment_id")
+            ),
+            {},
+        )
+        items.append({**assessment, **assessment_input})
+    return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)
+
+
 async def save_feedback(result_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     expert_id = payload["expert_id"]
     await ensure_user_profile(expert_id)

@@ -23,6 +23,14 @@ async def create_patient_assessment(request: PatientAssessmentRequest) -> dict:
     }
 
 
+@router.get("/history/{user_id}")
+def list_patient_assessment_history(user_id: str) -> dict:
+    return {
+        "success": True,
+        "items": storage.patient_assessment_history(user_id),
+    }
+
+
 @router.post("/simulate")
 def simulate_patient_assessment(request: PatientSimulationRequest) -> dict:
     prediction = patient_risk.simulate_patient_risk(request)
