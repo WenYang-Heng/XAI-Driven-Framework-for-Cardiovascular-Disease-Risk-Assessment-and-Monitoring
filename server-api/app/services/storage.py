@@ -23,6 +23,8 @@ _activity_logs: list[dict[str, Any]] = []
 _patient_cases: list[dict[str, Any]] = []
 _feedback: list[dict[str, Any]] = []
 _xai_explanations: list[dict[str, Any]] = []
+_assessments: list[dict[str, Any]] = []
+_assessment_inputs: list[dict[str, Any]] = []
 _upload_files: dict[str, dict[str, Any]] = {}
 _profiles: list[dict[str, Any]] = []
 
@@ -457,7 +459,7 @@ def _top_features(contributions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(contributions, key=lambda item: abs(item["contribution"]), reverse=True)[:5]
 
 
-async def ensure_user_profile(user_id: str | None) -> None:
+async def ensure_user_profile(user_id: str | None, default_role: str = "DOMAIN_EXPERT") -> None:
     if not user_id:
         return
 
@@ -465,7 +467,7 @@ async def ensure_user_profile(user_id: str | None) -> None:
         return
 
     if database_enabled():
-        _ensure_user_profile_database(user_id)
+        _ensure_user_profile_database(user_id, default_role)
         return
 
     if not _supabase_enabled():
@@ -479,9 +481,9 @@ async def ensure_user_profile(user_id: str | None) -> None:
     }
     payload = {
         "user_id": user_id,
-        "full_name": "Clinician User",
+        "full_name": "Patient User" if default_role == "PATIENT" else "Clinician User",
         "email": f"{user_id}@local.cardioxai",
-        "role": "DOMAIN_EXPERT",
+        "role": default_role,
         "updated_at": _now(),
     }
     async with httpx.AsyncClient(timeout=30) as client:
@@ -489,7 +491,7 @@ async def ensure_user_profile(user_id: str | None) -> None:
         response.raise_for_status()
 
 
-def _ensure_user_profile_database(user_id: str) -> None:
+def _ensure_user_profile_database(user_id: str, default_role: str = "DOMAIN_EXPERT") -> None:
     query = """
         insert into public.user_profiles (user_id, full_name, email, role, updated_at)
         values (%(user_id)s, %(full_name)s, %(email)s, %(role)s, %(updated_at)s)
@@ -498,14 +500,68 @@ def _ensure_user_profile_database(user_id: str) -> None:
     """
     payload = {
         "user_id": user_id,
-        "full_name": "Clinician User",
+        "full_name": "Patient User" if default_role == "PATIENT" else "Clinician User",
         "email": f"{user_id}@local.cardioxai",
-        "role": "DOMAIN_EXPERT",
+        "role": default_role,
         "updated_at": _now(),
     }
     with get_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(query, payload)
+
+
+async def save_patient_assessment(request_payload: dict[str, Any], prediction: dict[str, Any]) -> tuple[str, str]:
+    user_id = request_payload["user_id"]
+    await ensure_user_profile(user_id, default_role="PATIENT")
+
+    assessment_record = {
+        "assessment_id": str(uuid4()),
+        "user_id": user_id,
+        "model_id": None,
+        "assessed_at": _now(),
+        "created_at": _now(),
+        "risk_score": prediction["risk_score"],
+        "risk_category": prediction["risk_level"],
+        "confidence_level": prediction["confidence_level"],
+        "prediction_method": prediction["prediction_method"],
+        "estimated_inputs": prediction["estimated_inputs"],
+        "missing_inputs": prediction["missing_inputs"],
+        "explanation": prediction["explanation"],
+    }
+    _assessments.append(assessment_record)
+    inserted_assessment = await _insert(
+        "assessments",
+        {key: value for key, value in assessment_record.items() if key != "assessment_id"},
+    )
+    assessment_id = inserted_assessment.get("assessment_id", assessment_record["assessment_id"])
+
+    input_record = {
+        "assessment_input_id": str(uuid4()),
+        "assessment_id": assessment_id,
+        "age": request_payload["age"],
+        "sex": 1 if request_payload["sex"] == "male" else 0,
+        "bp_input_type": request_payload["bp_input_type"],
+        "systolic_bp": request_payload.get("systolic_bp"),
+        "bp_category": request_payload.get("bp_category"),
+        "cholesterol_input_type": request_payload["cholesterol_input_type"],
+        "total_cholesterol": request_payload.get("total_cholesterol"),
+        "cholesterol_category": request_payload.get("cholesterol_category"),
+        "diabetes_history": request_payload.get("diabetes_history"),
+        "smoking_status": request_payload.get("smoking_status"),
+        "activity_level": request_payload.get("activity_level"),
+        "weight": request_payload.get("weight"),
+        "weight_category": request_payload.get("weight_category"),
+        "created_at": _now(),
+    }
+    _assessment_inputs.append(input_record)
+    inserted_input = await _insert(
+        "assessments_input",
+        {key: value for key, value in input_record.items() if key != "assessment_input_id"},
+    )
+    assessment_input_id = inserted_input.get("assessment_input_id", input_record["assessment_input_id"])
+
+    await log_activity(user_id, "CREATE_PATIENT_ASSESSMENT", "assessments", assessment_id)
+    return assessment_id, assessment_input_id
 
 
 async def save_feedback(result_id: str, payload: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 ModelName = Literal["xgboost", "random_forest", "neural_network", "logistic_regression"]
@@ -194,6 +194,72 @@ class BatchConfirmRequest(BaseModel):
     model_name: ModelName
     patient_reference_mode: PatientReferenceMode = "csv_column"
     single_patient_reference_id: str | None = None
+
+
+PatientSex = Literal["female", "male"]
+PatientInputType = Literal["exact", "category", "unknown"]
+BpCategory = Literal["low", "normal", "elevated", "stage_1", "stage_2", "crisis"]
+CholesterolCategory = Literal["desirable", "borderline", "high"]
+DiabetesHistory = Literal["no", "prediabetes", "yes", "unsure"]
+SmokingStatus = Literal["no", "former", "yes"]
+ActivityLevel = Literal["low", "medium", "high"]
+WeightCategory = Literal["healthy", "overweight", "obese", "unsure"]
+PatientRiskLevel = Literal["low", "moderate", "high"]
+PatientConfidenceLevel = Literal["low", "medium", "high"]
+
+
+class PatientAssessmentRequest(BaseModel):
+    user_id: str
+    age: int = Field(..., ge=18, le=120)
+    sex: PatientSex
+    bp_input_type: PatientInputType
+    systolic_bp: float | None = Field(None, ge=70, le=260)
+    bp_category: BpCategory | None = None
+    cholesterol_input_type: PatientInputType
+    total_cholesterol: float | None = Field(None, ge=80, le=500)
+    cholesterol_category: CholesterolCategory | None = None
+    diabetes_history: DiabetesHistory = "unsure"
+    smoking_status: SmokingStatus = "no"
+    activity_level: ActivityLevel = "medium"
+    weight: float | None = Field(None, ge=20, le=350)
+    weight_category: WeightCategory = "unsure"
+
+    @model_validator(mode="after")
+    def validate_input_modes(self) -> "PatientAssessmentRequest":
+        if self.bp_input_type == "exact" and self.systolic_bp is None:
+            raise ValueError("systolic_bp is required when bp_input_type is exact")
+        if self.bp_input_type == "category" and self.bp_category is None:
+            raise ValueError("bp_category is required when bp_input_type is category")
+        if self.cholesterol_input_type == "exact" and self.total_cholesterol is None:
+            raise ValueError("total_cholesterol is required when cholesterol_input_type is exact")
+        if self.cholesterol_input_type == "category" and self.cholesterol_category is None:
+            raise ValueError("cholesterol_category is required when cholesterol_input_type is category")
+        return self
+
+
+class PatientSimulationRequest(PatientAssessmentRequest):
+    activity_minutes: float | None = Field(None, ge=0, le=2000)
+    nicotine_exposure: float | None = Field(None, ge=0, le=100)
+    target_bp: float | None = Field(None, ge=70, le=260)
+    target_cholesterol: float | None = Field(None, ge=80, le=500)
+    weight_change: float | None = Field(None, ge=-80, le=80)
+
+
+class PatientAssessmentPrediction(BaseModel):
+    risk_score: float = Field(..., ge=0, le=1)
+    risk_level: PatientRiskLevel
+    confidence_level: PatientConfidenceLevel
+    prediction_method: str
+    estimated_inputs: dict[str, float | None]
+    missing_inputs: list[str]
+    explanation: list[str]
+
+
+class PatientAssessmentResponse(BaseModel):
+    success: bool
+    assessment_id: str | None = None
+    assessment_input_id: str | None = None
+    prediction: PatientAssessmentPrediction
 
 
 PREDICTION_FEATURES = [
