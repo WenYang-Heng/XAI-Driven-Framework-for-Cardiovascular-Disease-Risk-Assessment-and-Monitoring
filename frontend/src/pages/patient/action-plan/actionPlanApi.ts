@@ -27,3 +27,25 @@ export async function generateActionPlan({
 
   return response.json();
 }
+
+export async function fetchActionPlan({
+  assessmentId,
+  userId,
+}: {
+  assessmentId: string;
+  userId: string;
+}) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/action-plans/assessment/${encodeURIComponent(assessmentId)}?user_id=${encodeURIComponent(userId)}`,
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error("Unable to load action plan.");
+  }
+
+  return response.json();
+}

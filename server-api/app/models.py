@@ -1,4 +1,5 @@
 from typing import Literal
+from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -272,6 +273,8 @@ class PatientAssessmentResponse(BaseModel):
 
 ActionPriority = Literal["low", "medium", "high"]
 ActionDifficulty = Literal["easy", "moderate", "hard"]
+ReminderRepeat = Literal["none", "daily", "weekly", "twice_weekly"]
+ReminderStatus = Literal["scheduled", "completed"]
 
 
 class ActionPlanGenerateRequest(BaseModel):
@@ -303,6 +306,47 @@ class ActionPlanPayload(BaseModel):
 
 class ActionPlanGenerateResponse(BaseModel):
     action_plan: dict
+
+
+ChatRole = Literal["user", "assistant"]
+
+
+class ChatbotHistoryMessage(BaseModel):
+    role: ChatRole
+    content: str = Field(..., min_length=1, max_length=500)
+
+
+class ChatbotMessageRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+    page_context: dict[str, Any] = Field(default_factory=lambda: {"page": "unknown"})
+    conversation_history: list[ChatbotHistoryMessage] = Field(default_factory=list, max_length=6)
+
+
+class ChatbotMessageResponse(BaseModel):
+    reply: str
+    suggested_questions: list[str]
+
+
+class ReminderRequest(BaseModel):
+    user_id: str
+    title: str = Field(..., min_length=1, max_length=160)
+    description: str | None = Field(None, max_length=500)
+    reminder_time: str
+    linked_item: str | None = Field(None, max_length=160)
+    repeat_interval: ReminderRepeat = "none"
+
+
+class ReminderUpdateRequest(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=160)
+    description: str | None = Field(None, max_length=500)
+    reminder_time: str | None = None
+    linked_item: str | None = Field(None, max_length=160)
+    repeat_interval: ReminderRepeat | None = None
+    status: ReminderStatus | None = None
+
+
+class ReminderResponse(BaseModel):
+    reminder: dict
 
 
 PREDICTION_FEATURES = [

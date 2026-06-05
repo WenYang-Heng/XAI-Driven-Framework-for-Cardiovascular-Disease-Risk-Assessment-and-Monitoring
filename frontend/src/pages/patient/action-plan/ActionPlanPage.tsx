@@ -1,54 +1,63 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   HeartPulse,
-  Info,
   ListChecks,
-  Plus,
   TrendingDown,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader } from "../../../components/ui/Card";
-import { generateActionPlan } from "./actionPlanApi";
-import {
-  buildGuidedPlan,
-  buildPlans,
-  initialGuidedPlan,
-} from "./actionPlanGenerator";
-import { GuidedActionBuilder } from "./GuidedActionBuilder";
-import { ActionPlanSummary as SummaryCard, PlanCard } from "./PlanCard";
-import type { ActionPlanPageProps, GeneratedActionPlan, GuidedPlanForm, PlanItem, RiskFactor } from "./types";
-
-type ActionView = "overview" | "create";
+import { fetchActionPlan, generateActionPlan } from "./actionPlanApi";
+import { buildPlans } from "./actionPlanGenerator";
+import { ActionPlanSummary as SummaryCard, ActionPlanTable } from "./PlanCard";
+import type { ActionPlanPageProps, GeneratedActionPlan, PlanItem, RiskFactor } from "./types";
 
 export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmentId }: ActionPlanPageProps) {
-  const [view, setView] = useState<ActionView>("overview");
-  const [customPlans, setCustomPlans] = useState<PlanItem[]>([]);
-  const [guidedForm, setGuidedForm] = useState<GuidedPlanForm>(initialGuidedPlan);
   const [generatedActionPlan, setGeneratedActionPlan] = useState<GeneratedActionPlan | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoadingPlan, setIsLoadingPlan] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
-  const guidedPlan = useMemo(() => buildGuidedPlan(guidedForm), [guidedForm]);
   const plans = useMemo(
-    () => [...customPlans, ...(generatedActionPlan?.items ?? [])],
-    [customPlans, generatedActionPlan],
+    () => generatedActionPlan?.items ?? [],
+    [generatedActionPlan],
   );
   const primaryPlan = plans[0] ?? null;
 
-  const updateGuidedForm = <Key extends keyof GuidedPlanForm>(
-    key: Key,
-    value: GuidedPlanForm[Key],
-  ) => {
-    setGuidedForm((current) => ({ ...current, [key]: value }));
-  };
+  useEffect(() => {
+    if (!userId || !assessmentId) {
+      setGeneratedActionPlan(null);
+      return;
+    }
 
-  const addGuidedPlan = () => {
-    setCustomPlans((current) => [guidedPlan, ...current]);
-    setView("overview");
-  };
+    let active = true;
+    setIsLoadingPlan(true);
+    setGenerationError(null);
+
+    fetchActionPlan({ assessmentId, userId })
+      .then((data) => {
+        if (!active) {
+          return;
+        }
+        setGeneratedActionPlan(data?.action_plan ? mapGeneratedActionPlan(data.action_plan) : null);
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        setGenerationError(error instanceof Error ? error.message : "Unable to load action plan.");
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoadingPlan(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [assessmentId, userId]);
 
   async function handleGenerateActionPlan(regenerate = false) {
     if (!userId || !assessmentId) {
@@ -68,38 +77,6 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
     }
   }
 
-  if (view === "create") {
-    return (
-      <section className="grid gap-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold text-cyan-700">Custom action</p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-              Create a guided action
-            </h2>
-            <p className="mt-4 text-base leading-7 text-slate-600">
-              Use simple coaching questions to generate a realistic action, then add it to the plan list.
-            </p>
-          </div>
-          <Button variant="secondary" onClick={() => setView("overview")}>
-            <ArrowLeft className="h-4 w-4" />
-            Back to plan
-          </Button>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <GuidedActionBuilder
-            form={guidedForm}
-            generatedPlan={guidedPlan}
-            updateField={updateGuidedForm}
-            onAddPlan={addGuidedPlan}
-          />
-          <ActionPlanHelp />
-        </div>
-      </section>
-    );
-  }
-
   return (
     <section className="grid gap-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -112,10 +89,6 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
             Recommendations are prioritized from the user's risk category and modifiable risk factors, then written as small, measurable actions.
           </p>
         </div>
-        <Button onClick={() => setView("create")}>
-          <Plus className="h-4 w-4" />
-          Add custom action
-        </Button>
       </div>
 
       <Card className="p-5">
@@ -127,6 +100,11 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
             <p className="mt-2 text-sm leading-6 text-slate-600">
               Generate specific examples and practical next steps from the latest saved assessment.
             </p>
+            {isLoadingPlan ? (
+              <p className="mt-2 text-sm font-semibold text-slate-500">
+                Loading latest saved plan...
+              </p>
+            ) : null}
             {generatedActionPlan ? (
               <p className="mt-2 text-sm font-semibold text-cyan-700">
                 {generatedActionPlan.generated_by === "ai_assisted" ? "AI-assisted" : "Rule-based fallback"} plan loaded.
@@ -134,10 +112,10 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
             ) : null}
           </div>
           <div className="flex flex-wrap gap-3">
-            <Button disabled={isGenerating || !assessmentId} onClick={() => handleGenerateActionPlan(false)}>
+            <Button disabled={isGenerating || isLoadingPlan || !assessmentId} onClick={() => handleGenerateActionPlan(false)}>
               {isGenerating ? "Generating..." : "Generate Action Plan"}
             </Button>
-            <Button variant="secondary" disabled={isGenerating || !assessmentId} onClick={() => handleGenerateActionPlan(true)}>
+            <Button variant="secondary" disabled={isGenerating || isLoadingPlan || !assessmentId} onClick={() => handleGenerateActionPlan(true)}>
               Regenerate
             </Button>
           </div>
@@ -161,37 +139,34 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
         <PlanMetric icon={TrendingDown} label="Focus area" value={primaryPlan?.factor ?? "Pending"} tone="green" />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.35fr_0.75fr]">
-        <Card className="p-6">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardHeader title="Action list" subtitle="Each action includes why, what to do next, and how to measure it." />
-            <Badge tone={currentCategory.tone}>Based on {currentCategory.label}</Badge>
-          </div>
-
-          {plans.length > 0 ? (
-            <div className="grid gap-4">
-              {plans.map((plan, index) => (
-                <PlanCard
-                  key={`${plan.title}-${index}`}
-                  index={index + 1}
-                  plan={plan}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-6">
-              <h3 className="font-bold tracking-tight text-slate-950">No action plan generated yet</h3>
-              <p className="mt-3 leading-7 text-slate-600">
-                Generate an action plan from your latest saved assessment to see specific examples, next steps, barriers, and measures.
-              </p>
-            </div>
-          )}
-        </Card>
-
-        <div className="grid gap-6">
-          <ActionPlanHelp compact />
+      <Card className="p-6">
+        <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <CardHeader title="Action list" subtitle="Each action includes why, what to do next, and how to measure it." />
+          <Badge tone={currentCategory.tone}>Based on {currentCategory.label}</Badge>
         </div>
-      </div>
+
+        <div className="mb-5 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
+          This plan supports self-management and does not replace medical advice or prescribed treatment.
+        </div>
+
+        {isLoadingPlan ? (
+          <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-6">
+            <h3 className="font-bold tracking-tight text-slate-950">Loading latest action plan</h3>
+            <p className="mt-3 leading-7 text-slate-600">
+              Checking whether an action plan has already been generated for your latest assessment.
+            </p>
+          </div>
+        ) : plans.length > 0 ? (
+          <ActionPlanTable plans={plans} />
+        ) : (
+          <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-6">
+            <h3 className="font-bold tracking-tight text-slate-950">No action plan generated yet</h3>
+            <p className="mt-3 leading-7 text-slate-600">
+              Generate an action plan from your latest saved assessment to see specific examples, next steps, barriers, and measures.
+            </p>
+          </div>
+        )}
+      </Card>
     </section>
   );
 }
@@ -233,39 +208,6 @@ function difficultyLabel(value: string): PlanItem["difficulty"] {
 
 export function ActionPlanSummary({ riskFactors }: { riskFactors: RiskFactor[] }) {
   return <SummaryCard plans={buildPlans(riskFactors)} />;
-}
-
-function ActionPlanHelp({ compact = false }: { compact?: boolean }) {
-  return (
-    <Card className="p-6">
-      <CardHeader
-        title={compact ? "How this plan is generated" : "Plan generator logic"}
-        subtitle="Plain-language design for non-domain users."
-      />
-      <div className="mt-5 grid gap-4">
-        <LogicPoint title="Prioritize" text="High-impact modifiable risk factors appear first." />
-        <LogicPoint title="Make it measurable" text="Each action includes a progress measure the user can track." />
-        {!compact ? (
-          <LogicPoint title="Plan for barriers" text="The builder asks what might get in the way, then suggests a smaller fallback step." />
-        ) : null}
-      </div>
-      <div className="mt-5 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
-        This plan supports self-management and does not replace medical advice or prescribed treatment.
-      </div>
-    </Card>
-  );
-}
-
-function LogicPoint({ title, text }: { title: string; text: string }) {
-  return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h3 className="flex items-center gap-2 font-bold tracking-tight text-slate-900">
-        <Info className="h-4 w-4 text-cyan-700" />
-        {title}
-      </h3>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
-    </article>
-  );
 }
 
 function PlanMetric({
