@@ -3,14 +3,10 @@ import {
   Activity,
   ArrowRight,
   Bell,
-  Check,
   ClipboardList,
-  Gauge,
   HeartPulse,
-  Info,
   LogOut,
   MessageCircle,
-  ShieldCheck,
   TrendingDown,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -18,17 +14,16 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { API_BASE_URL } from "../domain-expert/constants";
-import { ActionPlanPage, ActionPlanSummary } from "./action-plan/ActionPlanPage";
+import { ActionPlanPage } from "./action-plan/ActionPlanPage";
 import { AssessmentHistoryPage, type AssessmentHistoryItem } from "./assessment-history/AssessmentHistoryPage";
 import { RiskAssessment as PatientRiskAssessment } from "./assessment/RiskAssessment";
 import { ChatbotContextProvider, useChatbotContext, type ChatbotPageContext } from "./chatbot/ChatbotContext";
 import { VirtualCareChatbot } from "./chatbot/VirtualCareChatbot";
-import { ReminderSummary, RemindersPage } from "./reminders/RemindersPage";
+import { RemindersPage } from "./reminders/RemindersPage";
 import { fetchReminders, type ReminderRecord } from "./reminders/reminderApi";
 import { SimulatorPage } from "./simulator/SimulatorPage";
 
 type PatientTab =
-  | "dashboard"
   | "assessment"
   | "risk"
   | "history"
@@ -101,7 +96,6 @@ type CurrentUser = {
 };
 
 const navItems: NavItem[] = [
-  { id: "dashboard", label: "Dashboard", icon: Gauge },
   { id: "risk", label: "Risk Explorer", icon: HeartPulse },
   { id: "history", label: "Assessment History", icon: ClipboardList },
   { id: "action", label: "Action Plan", icon: ClipboardList },
@@ -136,28 +130,6 @@ const riskFactors: RiskFactor[] = [
     action: "Focus on modifiable factors such as activity, smoking, blood pressure, and monitoring.",
   },
 ];
-
-const initialAssessment: AssessmentForm = {
-  age: 45,
-  sex: "female",
-  heightCm: 165,
-  bpInputType: "exact",
-  systolicBp: 132,
-  diastolicBp: 84,
-  bpCategory: "above_normal",
-  cholesterolInputType: "exact",
-  cholesterol: 210,
-  cholesterolCategory: "above_normal",
-  glucoseInputType: "category",
-  glucose: 95,
-  glucoseCategory: "normal",
-  diabetes: "unsure",
-  smoking: "no",
-  activity: "yes",
-  weightKg: 70,
-  alcoholIntake: "no",
-  symptoms: "none",
-};
 
 function riskCategory(score: number): RiskCategory {
   if (score < 25) return { label: "Low Risk", tone: "green" };
@@ -264,6 +236,70 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
   return factors.length ? factors.slice(0, 3) : riskFactors;
 }
 
+function buildSavedRiskFactors(explanation: string[] | undefined, fallback: RiskFactor[]): RiskFactor[] {
+  const usableExplanations = (explanation ?? [])
+    .filter((message) => message && !message.toLowerCase().includes("not a medical diagnosis"))
+    .slice(0, 4);
+
+  if (!usableExplanations.length) {
+    return fallback;
+  }
+
+  return usableExplanations.map((message) => {
+    const name = factorNameFromExplanation(message);
+    return {
+      name,
+      type: name === "Age" ? "Non-modifiable" : "Modifiable",
+      impact: "Model explained factor",
+      description: message,
+      action: actionFromFactorName(name),
+    };
+  });
+}
+
+function factorNameFromExplanation(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes("systolic") || lower.includes("diastolic") || lower.includes("blood pressure")) {
+    return "Blood Pressure";
+  }
+  if (lower.includes("cholesterol")) {
+    return "Cholesterol";
+  }
+  if (lower.includes("blood sugar") || lower.includes("glucose")) {
+    return "Blood Sugar";
+  }
+  if (lower.includes("physical activity") || lower.includes("activity")) {
+    return "Physical Activity";
+  }
+  if (lower.includes("smoking")) {
+    return "Smoking Status";
+  }
+  if (lower.includes("bmi") || lower.includes("weight")) {
+    return "Weight / BMI";
+  }
+  if (lower.includes("age")) {
+    return "Age";
+  }
+  if (lower.includes("alcohol")) {
+    return "Alcohol Intake";
+  }
+  return "Model Factor";
+}
+
+function actionFromFactorName(name: string) {
+  const actions: Record<string, string> = {
+    "Blood Pressure": "Monitor blood pressure and reduce salty foods where possible.",
+    Cholesterol: "Choose more fibre-rich foods and follow up on cholesterol testing if needed.",
+    "Blood Sugar": "Use glucose readings from health checks and discuss unclear values with a healthcare professional.",
+    "Physical Activity": "Start with regular light movement, such as walking, and increase gradually.",
+    "Smoking Status": "Consider a smoking reduction or cessation plan with proper support.",
+    "Weight / BMI": "Focus on gradual, sustainable changes in activity and food choices.",
+    Age: "Focus on modifiable factors such as blood pressure, activity, smoking, and monitoring.",
+    "Alcohol Intake": "Keep alcohol intake moderate and follow health professional guidance.",
+  };
+  return actions[name] ?? "Review this factor and consider a practical next step.";
+}
+
 function bmi(form: AssessmentForm) {
   return form.weightKg / ((form.heightCm / 100) ** 2);
 }
@@ -303,6 +339,30 @@ function formToPatientAssessmentPayload(form: AssessmentForm, userId: string) {
   };
 }
 
+function createAssessmentDraft(): AssessmentForm {
+  return {
+    age: 45,
+    sex: "female",
+    heightCm: 165,
+    bpInputType: "unknown",
+    systolicBp: 120,
+    diastolicBp: 80,
+    bpCategory: "normal",
+    cholesterolInputType: "unknown",
+    cholesterol: 180,
+    cholesterolCategory: "normal",
+    glucoseInputType: "unknown",
+    glucose: 95,
+    glucoseCategory: "normal",
+    diabetes: "unsure",
+    smoking: "no",
+    activity: "yes",
+    weightKg: 70,
+    alcoholIntake: "no",
+    symptoms: "none",
+  };
+}
+
 async function loadAssessmentHistory(userId: string): Promise<AssessmentHistoryItem[]> {
   const response = await fetch(`${API_BASE_URL}/api/patient-assessments/history/${userId}`);
   if (!response.ok) {
@@ -332,9 +392,9 @@ function historyItemToPrediction(item: AssessmentHistoryItem): PatientPrediction
 }
 
 export function PatientDashboard({ currentUser, onLogout }: { currentUser?: CurrentUser | null; onLogout?: () => void }) {
-  const [activePage, setActivePage] = useState<PatientTab>("dashboard");
+  const [activePage, setActivePage] = useState<PatientTab>("risk");
   const [assessmentStep, setAssessmentStep] = useState(0);
-  const [assessment, setAssessment] = useState<AssessmentForm>(initialAssessment);
+  const [assessment, setAssessment] = useState<AssessmentForm>(() => createAssessmentDraft());
   const [hasAssessment, setHasAssessment] = useState(false);
   const [latestPrediction, setLatestPrediction] = useState<PatientPrediction | null>(null);
   const [latestAssessmentId, setLatestAssessmentId] = useState<string | null>(null);
@@ -347,7 +407,11 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
 
   const previewRisk = useMemo(() => calculateDemoRisk(assessment), [assessment]);
   const currentRisk = latestPrediction ? Math.round(latestPrediction.risk_score * 1000) / 10 : previewRisk;
-  const personalizedRiskFactors = useMemo(() => buildRiskFactors(assessment), [assessment]);
+  const formRiskFactors = useMemo(() => buildRiskFactors(assessment), [assessment]);
+  const personalizedRiskFactors = useMemo(
+    () => buildSavedRiskFactors(latestPrediction?.explanation, formRiskFactors),
+    [formRiskFactors, latestPrediction],
+  );
 
   const currentCategory = riskCategory(currentRisk);
   const chatbotPageContext = useMemo<ChatbotPageContext>(() => {
@@ -359,12 +423,13 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
         available_inputs: [
           "age",
           "sex",
+          "height and weight",
           "blood pressure",
           "cholesterol",
-          "diabetes history",
+          "blood glucose",
           "smoking status",
-          "activity level",
-          "weight category",
+          "physical activity",
+          "alcohol intake",
         ],
         unknown_allowed: true,
         current_step: assessmentStep,
@@ -395,16 +460,6 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
           priority: factor.impact,
           next_step: factor.action,
         })),
-      };
-    }
-
-    if (activePage === "dashboard") {
-      return {
-        page: "dashboard",
-        latest_risk_score: hasAssessment ? currentRisk : null,
-        latest_risk_category: hasAssessment ? currentCategory.label : "not assessed",
-        pending_action_items_count: reminders.filter((reminder) => reminder.status === "scheduled").length,
-        top_factors: topFactors,
       };
     }
 
@@ -491,7 +546,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
   ) => setAssessment((current) => ({ ...current, [key]: value }));
 
   const startNewAssessment = () => {
-    setAssessment(initialAssessment);
+    setAssessment(createAssessmentDraft());
     setAssessmentStep(0);
     setAssessmentError(null);
     setActivePage("assessment");
@@ -541,18 +596,6 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
             <TopBar onLogout={onLogout} hasAssessment={hasAssessment} />
 
             <div className="mt-7">
-            {activePage === "dashboard" ? (
-              <Dashboard
-                currentRisk={currentRisk}
-                currentCategory={currentCategory}
-                hasAssessment={hasAssessment}
-                isAssessmentHistoryLoading={isAssessmentHistoryLoading}
-                riskFactors={personalizedRiskFactors}
-                reminders={reminders}
-                setActivePage={setActivePage}
-                onStartAssessment={startNewAssessment}
-              />
-            ) : null}
             {activePage === "assessment" ? (
               <PatientRiskAssessment
                 form={assessment}
@@ -572,8 +615,8 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
                 currentRisk={currentRisk}
                 currentCategory={currentCategory}
                 hasAssessment={hasAssessment}
+                isAssessmentHistoryLoading={isAssessmentHistoryLoading}
                 riskFactors={personalizedRiskFactors}
-                setActivePage={setActivePage}
                 onStartAssessment={startNewAssessment}
               />
             ) : null}
@@ -709,14 +752,12 @@ function TopBar({
   );
 }
 
-function Dashboard({
+function RiskExplorer({
   currentRisk,
   currentCategory,
   hasAssessment,
   isAssessmentHistoryLoading,
   riskFactors,
-  reminders,
-  setActivePage,
   onStartAssessment,
 }: {
   currentRisk: number;
@@ -724,8 +765,6 @@ function Dashboard({
   hasAssessment: boolean;
   isAssessmentHistoryLoading: boolean;
   riskFactors: RiskFactor[];
-  reminders: ReminderRecord[];
-  setActivePage: (page: PatientTab) => void;
   onStartAssessment: () => void;
 }) {
   if (isAssessmentHistoryLoading) {
@@ -734,12 +773,12 @@ function Dashboard({
         <Card className="p-6">
           <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
             <div>
-              <p className="text-sm font-semibold text-cyan-700">Restoring dashboard</p>
+              <p className="text-sm font-semibold text-cyan-700">Risk Explorer</p>
               <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
                 Loading your latest assessment
               </h2>
               <p className="mt-3 leading-7 text-slate-600">
-                Checking your saved assessment history before showing the next step.
+                Checking your saved assessment history before showing your result.
               </p>
             </div>
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-cyan-100 border-t-cyan-600" />
@@ -752,141 +791,10 @@ function Dashboard({
   if (!hasAssessment) {
     return (
       <section className="grid gap-6">
-        <div className="grid gap-6 xl:grid-cols-[1.4fr_0.8fr]">
-          <Card className="overflow-hidden p-6">
-            <div className="grid gap-7 lg:grid-cols-[1fr_260px] lg:items-center">
-              <div>
-                <p className="flex items-center gap-2 text-sm font-semibold text-cyan-700">
-                  <ShieldCheck className="h-4 w-4" />
-                  Start here
-                </p>
-                <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-                  Complete your CVD risk assessment
-                </h2>
-                <p className="mt-4 max-w-2xl leading-7 text-slate-600">
-                  Answer a short set of plain-language questions about your health numbers and daily habits. After that, this dashboard will show your estimated risk, top contributors, and recommended next steps.
-                </p>
-                <div className="mt-6 flex flex-wrap gap-3">
-                  <Button onClick={onStartAssessment}>
-                    Start assessment
-                    <ArrowRight className="h-4 w-4" />
-                  </Button>
-                  <Button variant="secondary" onClick={() => setActivePage("navigator")}>
-                    Ask care navigator
-                  </Button>
-                </div>
-              </div>
-
-              <div className="rounded-[22px] border border-cyan-100 bg-cyan-50 p-5">
-                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-cyan-700 shadow-sm">
-                  <ClipboardList className="h-6 w-6" />
-                </div>
-                <h3 className="mt-5 text-xl font-bold tracking-tight">What you will fill in</h3>
-                <div className="mt-4 grid gap-3 text-sm text-cyan-950">
-                  {["Age, sex, height, and weight", "Blood pressure and cholesterol", "Glucose, smoking, activity", "Symptoms and safety check"].map((item) => (
-                    <div key={item} className="flex items-center gap-2">
-                      <Check className="h-4 w-4 text-emerald-600" />
-                      <span>{item}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="p-6">
-            <CardHeader title="Friendly assessment design" subtitle="Built for non-domain users" />
-            <div className="mt-5 grid gap-4">
-              <PlainLanguagePoint title="Guided steps" text="The form is split into small sections so users are not overwhelmed." />
-              <PlainLanguagePoint title="Helpful ranges" text="Health numbers include simple hints such as usual blood pressure ranges." />
-              <PlainLanguagePoint title="Safety prompts" text="Urgent symptoms are clearly flagged and users are reminded this is not a diagnosis." />
-            </div>
-          </Card>
-        </div>
-      </section>
-    );
-  }
-
-  return (
-    <section className="grid gap-6">
-      <div className="grid gap-6 xl:grid-cols-[2fr_0.85fr]">
-        <Card className="p-6">
-          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <CardHeader
-              title="Your estimated CVD risk"
-              subtitle="The score summarizes the model estimate for your latest assessment."
-            />
-            <StatusBadge tone={currentCategory.tone}>{currentCategory.label}</StatusBadge>
-          </div>
-
-          <div className="grid items-center gap-7 text-center md:grid-cols-[210px_1fr] md:text-left">
-            <div className="mx-auto md:mx-0">
-              <RiskGauge value={currentRisk} label={currentCategory.label} />
-            </div>
-            <div>
-              <h3 className="text-3xl font-bold tracking-tight text-slate-950">
-                {currentRisk}% estimated risk
-              </h3>
-              <p className="mt-3 leading-7 text-slate-600">
-                Your risk is currently in the moderate range. The result is mainly influenced by blood pressure, activity level, and age group.
-              </p>
-              <Notice tone="soft">This score is an estimate and not a medical diagnosis.</Notice>
-              <Button className="mt-5" onClick={() => setActivePage("risk")}>
-                View full explanation
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button variant="secondary" className="ml-0 mt-3 sm:ml-3" onClick={onStartAssessment}>
-                Retake assessment
-              </Button>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="flex flex-col justify-between p-6">
-          <div>
-            <p className="text-sm font-semibold text-cyan-700">Next recommended step</p>
-            <h3 className="mt-2 text-2xl font-bold tracking-tight">Try a safer lifestyle scenario</h3>
-            <p className="mt-4 leading-7 text-slate-600">
-              Explore how realistic changes such as walking more often or reducing salt intake may affect your projected risk.
-            </p>
-          </div>
-          <Button variant="secondary" className="mt-6 w-fit" onClick={() => setActivePage("simulator")}>
-            Open simulator
-          </Button>
-        </Card>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <TopRiskFactors compact factors={riskFactors} />
-        <ActionPlanSummary riskFactors={riskFactors} />
-        <ReminderSummary reminders={reminders} onManage={() => setActivePage("reminders")} />
-      </div>
-    </section>
-  );
-}
-
-function RiskExplorer({
-  currentRisk,
-  currentCategory,
-  hasAssessment,
-  riskFactors,
-  setActivePage,
-  onStartAssessment,
-}: {
-  currentRisk: number;
-  currentCategory: RiskCategory;
-  hasAssessment: boolean;
-  riskFactors: RiskFactor[];
-  setActivePage: (page: PatientTab) => void;
-  onStartAssessment: () => void;
-}) {
-  if (!hasAssessment) {
-    return (
-      <section className="grid gap-6">
         <SectionTitle
-          label="Risk explanation module"
-          title="Assessment needed first"
-          description="The risk explanation will appear after the user completes the CVD risk assessment."
+          label="Risk Explorer"
+          title="Start with your CVD risk assessment"
+          description="Complete the guided assessment first. Your estimated risk result and explanation will appear here after submission."
         />
         <Card className="grid gap-4 p-6 md:grid-cols-[1fr_auto] md:items-center">
           <div>
@@ -907,7 +815,7 @@ function RiskExplorer({
   return (
     <section className="grid gap-6">
       <SectionTitle
-        label="Risk explanation module"
+        label="Risk Explorer"
         title="Understand your risk result"
         description="This page explains the risk score, risk category, and top contributing factors using non-technical language."
       />
@@ -927,18 +835,6 @@ function RiskExplorer({
         <TopRiskFactors factors={riskFactors} />
       </div>
     </section>
-  );
-}
-
-function PlainLanguagePoint({ title, text }: { title: string; text: string }) {
-  return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4">
-      <h3 className="flex items-center gap-2 font-bold tracking-tight text-slate-900">
-        <Info className="h-4 w-4 text-cyan-700" />
-        {title}
-      </h3>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
-    </article>
   );
 }
 
