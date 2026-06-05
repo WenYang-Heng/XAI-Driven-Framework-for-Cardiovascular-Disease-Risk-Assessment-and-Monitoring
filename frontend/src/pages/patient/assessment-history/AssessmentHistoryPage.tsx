@@ -14,6 +14,11 @@ export type AssessmentHistoryItem = {
   risk_category: "low" | "moderate" | "high";
   confidence_level: "low" | "medium" | "high";
   prediction_method?: string;
+  estimated_inputs?: {
+    systolic_bp?: number | null;
+    total_cholesterol?: number | null;
+  };
+  missing_inputs?: string[];
   bp_input_type?: string;
   systolic_bp?: number | null;
   bp_category?: string | null;
@@ -123,7 +128,7 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
                   {[...items].map((item) => (
                     <tr key={item.assessment_id} className="align-top hover:bg-slate-50/70">
                       <td className="px-5 py-4 text-slate-600">
-                        {formatDateTime(item.assessed_at ?? item.created_at)}
+                        {formatDate(item.assessed_at ?? item.created_at)}
                       </td>
                       <td className="px-5 py-4 font-semibold text-slate-950">
                         {Math.round(Number(item.risk_score ?? 0) * 1000) / 10}%
@@ -197,6 +202,15 @@ function formatDateTime(value?: string) {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function formatDate(value?: string) {
+  if (!value) {
+    return "Unknown date";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
   }).format(new Date(value));
 }
 

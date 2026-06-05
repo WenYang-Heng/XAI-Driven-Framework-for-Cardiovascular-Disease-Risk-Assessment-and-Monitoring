@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import action_plans, admin, batch, health, history, models, patient_assessments, patients, predictions, profile
+from app.routers import action_plans, admin, batch, chatbot, health, history, models, patient_assessments, patients, predictions, profile, reminders
 
 from dotenv import load_dotenv
 
@@ -25,6 +25,7 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(action_plans.router)
+app.include_router(chatbot.router)
 app.include_router(models.router)
 app.include_router(predictions.router)
 app.include_router(batch.router)
@@ -33,6 +34,7 @@ app.include_router(admin.router)
 app.include_router(profile.router)
 app.include_router(patient_assessments.router)
 app.include_router(patients.router)
+app.include_router(reminders.router)
 
 
 @app.get("/")

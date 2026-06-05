@@ -27,6 +27,7 @@ _assessments: list[dict[str, Any]] = []
 _assessment_inputs: list[dict[str, Any]] = []
 _action_plans: list[dict[str, Any]] = []
 _action_items: list[dict[str, Any]] = []
+_reminders: list[dict[str, Any]] = []
 _upload_files: dict[str, dict[str, Any]] = {}
 _profiles: list[dict[str, Any]] = []
 
@@ -660,6 +661,143 @@ def get_patient_assessment_with_input(assessment_id: str, user_id: str) -> tuple
         {},
     )
     return assessment, assessment_input
+
+
+def list_reminders(user_id: str) -> list[dict[str, Any]]:
+    if database_enabled():
+        return _query_database(
+            """
+            select *
+            from public.reminders
+            where user_id = %(user_id)s
+            order by
+              case when status = 'scheduled' then 0 else 1 end,
+              reminder_time asc
+            """,
+            {"user_id": user_id},
+        )
+
+    return sorted(
+        [reminder for reminder in _reminders if reminder.get("user_id") == user_id],
+        key=lambda reminder: (reminder.get("status") != "scheduled", reminder.get("reminder_time", "")),
+    )
+
+
+async def create_reminder(payload: dict[str, Any]) -> dict[str, Any]:
+    reminder = {
+        "reminder_id": str(uuid4()),
+        "user_id": payload["user_id"],
+        "title": payload["title"],
+        "description": payload.get("description"),
+        "reminder_time": payload["reminder_time"],
+        "linked_item": payload.get("linked_item"),
+        "repeat_interval": payload.get("repeat_interval", "none"),
+        "status": "scheduled",
+        "completed_at": None,
+        "created_at": _now(),
+        "updated_at": _now(),
+    }
+
+    _reminders.append(reminder)
+    inserted = await _insert("reminders", {key: value for key, value in reminder.items() if key != "reminder_id"})
+    reminder_id = inserted.get("reminder_id", reminder["reminder_id"])
+    await log_activity(payload.get("user_id"), "CREATE_REMINDER", "reminders", reminder_id)
+    return {**reminder, **inserted, "reminder_id": reminder_id}
+
+
+async def update_reminder(reminder_id: str, user_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    update_payload = {key: value for key, value in payload.items() if value is not None}
+    if not update_payload:
+        return get_reminder(reminder_id, user_id)
+
+    update_payload["updated_at"] = _now()
+    if update_payload.get("status") == "completed":
+        update_payload["completed_at"] = update_payload.get("completed_at") or _now()
+    elif update_payload.get("status") == "scheduled":
+        update_payload["completed_at"] = None
+
+    if database_enabled():
+        rows = _query_database(
+            """
+            update public.reminders
+            set
+              title = coalesce(%(title)s, title),
+              description = coalesce(%(description)s, description),
+              reminder_time = coalesce(%(reminder_time)s, reminder_time),
+              linked_item = coalesce(%(linked_item)s, linked_item),
+              repeat_interval = coalesce(%(repeat_interval)s, repeat_interval),
+              status = coalesce(%(status)s, status),
+              completed_at = %(completed_at)s,
+              updated_at = %(updated_at)s
+            where reminder_id = %(reminder_id)s
+              and user_id = %(user_id)s
+            returning *
+            """,
+            {
+                "reminder_id": reminder_id,
+                "user_id": user_id,
+                "title": update_payload.get("title"),
+                "description": update_payload.get("description"),
+                "reminder_time": update_payload.get("reminder_time"),
+                "linked_item": update_payload.get("linked_item"),
+                "repeat_interval": update_payload.get("repeat_interval"),
+                "status": update_payload.get("status"),
+                "completed_at": update_payload.get("completed_at"),
+                "updated_at": update_payload["updated_at"],
+            },
+        )
+        return rows[0] if rows else None
+
+    reminder = get_reminder(reminder_id, user_id)
+    if not reminder:
+        return None
+    reminder.update(update_payload)
+    return reminder
+
+
+async def delete_reminder(reminder_id: str, user_id: str) -> bool:
+    if database_enabled():
+        rows = _query_database(
+            """
+            delete from public.reminders
+            where reminder_id = %(reminder_id)s
+              and user_id = %(user_id)s
+            returning reminder_id
+            """,
+            {"reminder_id": reminder_id, "user_id": user_id},
+        )
+        return bool(rows)
+
+    before = len(_reminders)
+    _reminders[:] = [
+        reminder for reminder in _reminders
+        if not (reminder.get("reminder_id") == reminder_id and reminder.get("user_id") == user_id)
+    ]
+    return len(_reminders) < before
+
+
+def get_reminder(reminder_id: str, user_id: str) -> dict[str, Any] | None:
+    if database_enabled():
+        rows = _query_database(
+            """
+            select *
+            from public.reminders
+            where reminder_id = %(reminder_id)s
+              and user_id = %(user_id)s
+            limit 1
+            """,
+            {"reminder_id": reminder_id, "user_id": user_id},
+        )
+        return rows[0] if rows else None
+
+    return next(
+        (
+            reminder
+            for reminder in _reminders
+            if reminder.get("reminder_id") == reminder_id and reminder.get("user_id") == user_id
+        ),
+        None,
+    )
 
 
 def get_action_plan_for_assessment(assessment_id: str, user_id: str) -> dict[str, Any] | None:

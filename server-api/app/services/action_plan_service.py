@@ -4,6 +4,10 @@ from app.models import ActionPlanPayload
 from app.services import action_plan_ai_service, action_plan_fallback_service, storage
 
 
+def get_action_plan_for_assessment(assessment_id: str, user_id: str) -> dict[str, Any] | None:
+    return storage.get_action_plan_for_assessment(assessment_id, user_id)
+
+
 async def generate_action_plan(assessment_id: str, user_id: str, regenerate: bool = False) -> dict[str, Any]:
     assessment_bundle = storage.get_patient_assessment_with_input(assessment_id, user_id)
     if not assessment_bundle:

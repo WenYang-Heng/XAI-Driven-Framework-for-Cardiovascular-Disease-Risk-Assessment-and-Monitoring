@@ -7,6 +7,17 @@ from app.services import action_plan_service
 router = APIRouter(prefix="/api/action-plans", tags=["action plans"])
 
 
+@router.get("/assessment/{assessment_id}")
+def get_action_plan(assessment_id: str, user_id: str) -> dict:
+    action_plan = action_plan_service.get_action_plan_for_assessment(
+        assessment_id=assessment_id,
+        user_id=user_id,
+    )
+    if not action_plan:
+        raise HTTPException(status_code=404, detail="Action plan not found.")
+    return {"action_plan": action_plan}
+
+
 @router.post("/generate")
 async def generate_action_plan(request: ActionPlanGenerateRequest) -> dict:
     try:

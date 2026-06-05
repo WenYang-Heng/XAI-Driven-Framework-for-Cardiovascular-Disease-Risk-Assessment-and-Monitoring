@@ -21,7 +21,10 @@ import { API_BASE_URL } from "../domain-expert/constants";
 import { ActionPlanPage, ActionPlanSummary } from "./action-plan/ActionPlanPage";
 import { AssessmentHistoryPage, type AssessmentHistoryItem } from "./assessment-history/AssessmentHistoryPage";
 import { RiskAssessment as PatientRiskAssessment } from "./assessment/RiskAssessment";
+import { ChatbotContextProvider, useChatbotContext, type ChatbotPageContext } from "./chatbot/ChatbotContext";
+import { VirtualCareChatbot } from "./chatbot/VirtualCareChatbot";
 import { ReminderSummary, RemindersPage } from "./reminders/RemindersPage";
+import { fetchReminders, type ReminderRecord } from "./reminders/reminderApi";
 import { SimulatorPage } from "./simulator/SimulatorPage";
 
 type PatientTab =
@@ -96,7 +99,6 @@ type CurrentUser = {
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: Gauge },
-  { id: "assessment", label: "Risk Assessment", icon: ClipboardList },
   { id: "risk", label: "Risk Explorer", icon: HeartPulse },
   { id: "history", label: "Assessment History", icon: ClipboardList },
   { id: "action", label: "Action Plan", icon: ClipboardList },
@@ -284,6 +286,25 @@ async function loadAssessmentHistory(userId: string): Promise<AssessmentHistoryI
   return data.items ?? [];
 }
 
+async function loadReminders(userId: string): Promise<ReminderRecord[]> {
+  return fetchReminders(userId);
+}
+
+function historyItemToPrediction(item: AssessmentHistoryItem): PatientPrediction {
+  return {
+    risk_score: Number(item.risk_score ?? 0),
+    risk_level: item.risk_category,
+    confidence_level: item.confidence_level,
+    prediction_method: item.prediction_method ?? "patient_screening",
+    estimated_inputs: item.estimated_inputs ?? {
+      systolic_bp: item.systolic_bp ?? null,
+      total_cholesterol: item.total_cholesterol ?? null,
+    },
+    missing_inputs: item.missing_inputs ?? [],
+    explanation: item.explanation ?? [],
+  };
+}
+
 export function PatientDashboard({ currentUser, onLogout }: { currentUser?: CurrentUser | null; onLogout?: () => void }) {
   const [activePage, setActivePage] = useState<PatientTab>("dashboard");
   const [assessmentStep, setAssessmentStep] = useState(0);
@@ -292,8 +313,10 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
   const [latestPrediction, setLatestPrediction] = useState<PatientPrediction | null>(null);
   const [latestAssessmentId, setLatestAssessmentId] = useState<string | null>(null);
   const [assessmentHistory, setAssessmentHistory] = useState<AssessmentHistoryItem[]>([]);
+  const [reminders, setReminders] = useState<ReminderRecord[]>([]);
   const [assessmentError, setAssessmentError] = useState<string | null>(null);
   const [isAssessmentLoading, setIsAssessmentLoading] = useState(false);
+  const [isAssessmentHistoryLoading, setIsAssessmentHistoryLoading] = useState(Boolean(currentUser?.id));
   const userId = currentUser?.id;
 
   const previewRisk = useMemo(() => calculateDemoRisk(assessment), [assessment]);
@@ -301,21 +324,152 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
   const personalizedRiskFactors = useMemo(() => buildRiskFactors(assessment), [assessment]);
 
   const currentCategory = riskCategory(currentRisk);
+  const chatbotPageContext = useMemo<ChatbotPageContext>(() => {
+    const topFactors = personalizedRiskFactors.map((factor) => factor.name);
+
+    if (activePage === "assessment") {
+      return {
+        page: "assessment_form",
+        available_inputs: [
+          "age",
+          "sex",
+          "blood pressure",
+          "cholesterol",
+          "diabetes history",
+          "smoking status",
+          "activity level",
+          "weight category",
+        ],
+        unknown_allowed: true,
+        current_step: assessmentStep,
+      };
+    }
+
+    if (activePage === "risk") {
+      return {
+        page: "assessment_result",
+        risk_score: currentRisk,
+        risk_category: currentCategory.label,
+        confidence_level: latestPrediction?.confidence_level ?? "unknown",
+        top_factors: topFactors,
+        missing_inputs: latestPrediction?.missing_inputs ?? [],
+        explanation: latestPrediction?.explanation ?? [],
+      };
+    }
+
+    if (activePage === "action") {
+      return {
+        page: "action_plan",
+        risk_category: currentCategory.label,
+        assessment_id: latestAssessmentId ?? assessmentHistory[0]?.assessment_id ?? null,
+        top_factors: topFactors,
+        action_items: personalizedRiskFactors.map((factor) => ({
+          title: factor.action,
+          factor: factor.name,
+          priority: factor.impact,
+          next_step: factor.action,
+        })),
+      };
+    }
+
+    if (activePage === "dashboard") {
+      return {
+        page: "dashboard",
+        latest_risk_score: hasAssessment ? currentRisk : null,
+        latest_risk_category: hasAssessment ? currentCategory.label : "not assessed",
+        pending_action_items_count: reminders.filter((reminder) => reminder.status === "scheduled").length,
+        top_factors: topFactors,
+      };
+    }
+
+    if (activePage === "reminders") {
+      return {
+        page: "reminders",
+        reminders: reminders
+          .filter((reminder) => reminder.status === "scheduled")
+          .slice(0, 3)
+          .map((reminder) => ({
+            title: reminder.title,
+            status: reminder.status,
+            reminder_time: reminder.reminder_time,
+          })),
+      };
+    }
+
+    return {
+      page: "unknown",
+      active_page: activePage,
+      latest_risk_score: hasAssessment ? currentRisk : null,
+      latest_risk_category: hasAssessment ? currentCategory.label : "not assessed",
+    };
+  }, [
+    activePage,
+    assessmentHistory,
+    assessmentStep,
+    currentCategory.label,
+    currentRisk,
+    hasAssessment,
+    latestAssessmentId,
+    latestPrediction,
+    personalizedRiskFactors,
+    reminders,
+  ]);
 
   useEffect(() => {
     if (!userId) {
+      setIsAssessmentHistoryLoading(false);
       return;
     }
 
+    setIsAssessmentHistoryLoading(true);
     loadAssessmentHistory(userId)
-      .then(setAssessmentHistory)
-      .catch(() => setAssessmentHistory([]));
+      .then((items) => {
+        setAssessmentHistory(items);
+
+        const latest = items[0];
+        if (!latest) {
+          setHasAssessment(false);
+          setLatestPrediction(null);
+          setLatestAssessmentId(null);
+          return;
+        }
+
+        setLatestPrediction(historyItemToPrediction(latest));
+        setLatestAssessmentId(latest.assessment_id);
+        setHasAssessment(true);
+      })
+      .catch(() => {
+        setAssessmentHistory([]);
+        setHasAssessment(false);
+        setLatestPrediction(null);
+        setLatestAssessmentId(null);
+      })
+      .finally(() => setIsAssessmentHistoryLoading(false));
+
+    loadReminders(userId)
+      .then(setReminders)
+      .catch(() => setReminders([]));
   }, [userId]);
+
+  const refreshReminders = async () => {
+    if (!userId) {
+      setReminders([]);
+      return;
+    }
+    setReminders(await loadReminders(userId));
+  };
 
   const updateAssessment = <Key extends keyof AssessmentForm>(
     key: Key,
     value: AssessmentForm[Key],
   ) => setAssessment((current) => ({ ...current, [key]: value }));
+
+  const startNewAssessment = () => {
+    setAssessment(initialAssessment);
+    setAssessmentStep(0);
+    setAssessmentError(null);
+    setActivePage("assessment");
+  };
 
   const completeAssessment = async () => {
     if (!userId) {
@@ -351,69 +505,91 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
   };
 
   return (
-    <main className="min-h-screen bg-[#F8FAFC] text-slate-950 lg:grid lg:grid-cols-[280px_1fr]">
-      <PatientSidebar activePage={activePage} onChange={setActivePage} />
+    <ChatbotContextProvider>
+      <ChatbotContextSync context={chatbotPageContext} />
+      <main className="min-h-screen bg-[#F8FAFC] text-slate-950 lg:grid lg:grid-cols-[280px_1fr]">
+        <PatientSidebar activePage={activePage} onChange={setActivePage} />
 
-      <section className="min-w-0 px-5 py-5 lg:px-8">
-        <TopBar onLogout={onLogout} hasAssessment={hasAssessment} />
+        <section className="min-w-0 px-5 py-5 lg:px-8">
+          <div className="mx-auto w-full max-w-[1440px]">
+            <TopBar onLogout={onLogout} hasAssessment={hasAssessment} />
 
-        <div className="mt-7">
-          {activePage === "dashboard" ? (
-            <Dashboard
-              currentRisk={currentRisk}
-              currentCategory={currentCategory}
-              hasAssessment={hasAssessment}
-              riskFactors={personalizedRiskFactors}
-              setActivePage={setActivePage}
-            />
-          ) : null}
-          {activePage === "assessment" ? (
-            <PatientRiskAssessment
-              form={assessment}
-              step={assessmentStep}
-              setStep={setAssessmentStep}
-              updateField={updateAssessment}
-              currentRisk={currentRisk}
-              currentCategory={currentCategory}
-              prediction={latestPrediction}
-              error={assessmentError}
-              isLoading={isAssessmentLoading}
-              onComplete={completeAssessment}
-              RiskGauge={RiskGauge}
-              StatusBadge={StatusBadge}
-              Notice={Notice}
-              SectionTitle={SectionTitle}
-            />
-          ) : null}
-          {activePage === "risk" ? (
-            <RiskExplorer
-              currentRisk={currentRisk}
-              currentCategory={currentCategory}
-              hasAssessment={hasAssessment}
-              riskFactors={personalizedRiskFactors}
-              setActivePage={setActivePage}
-            />
-          ) : null}
-          {activePage === "history" ? (
-            <AssessmentHistoryPage items={assessmentHistory} onStartAssessment={() => setActivePage("assessment")} />
-          ) : null}
-          {activePage === "action" ? (
-            <ActionPlanPage
-              currentCategory={currentCategory}
-              riskFactors={personalizedRiskFactors}
-              userId={userId}
-              assessmentId={latestAssessmentId ?? assessmentHistory[0]?.assessment_id ?? null}
-            />
-          ) : null}
-          {activePage === "simulator" ? (
-            <SimulatorPage currentRisk={currentRisk} currentCategory={currentCategory} />
-          ) : null}
-          {activePage === "reminders" ? <RemindersPage /> : null}
-          {activePage === "navigator" ? <CareNavigator /> : null}
-        </div>
-      </section>
-    </main>
+            <div className="mt-7">
+            {activePage === "dashboard" ? (
+              <Dashboard
+                currentRisk={currentRisk}
+                currentCategory={currentCategory}
+                hasAssessment={hasAssessment}
+                isAssessmentHistoryLoading={isAssessmentHistoryLoading}
+                riskFactors={personalizedRiskFactors}
+                reminders={reminders}
+                setActivePage={setActivePage}
+                onStartAssessment={startNewAssessment}
+              />
+            ) : null}
+            {activePage === "assessment" ? (
+              <PatientRiskAssessment
+                form={assessment}
+                step={assessmentStep}
+                setStep={setAssessmentStep}
+                updateField={updateAssessment}
+                currentRisk={currentRisk}
+                currentCategory={currentCategory}
+                prediction={latestPrediction}
+                error={assessmentError}
+                isLoading={isAssessmentLoading}
+                onComplete={completeAssessment}
+                RiskGauge={RiskGauge}
+                StatusBadge={StatusBadge}
+                Notice={Notice}
+                SectionTitle={SectionTitle}
+              />
+            ) : null}
+            {activePage === "risk" ? (
+              <RiskExplorer
+                currentRisk={currentRisk}
+                currentCategory={currentCategory}
+                hasAssessment={hasAssessment}
+                riskFactors={personalizedRiskFactors}
+                setActivePage={setActivePage}
+                onStartAssessment={startNewAssessment}
+              />
+            ) : null}
+            {activePage === "history" ? (
+              <AssessmentHistoryPage items={assessmentHistory} onStartAssessment={startNewAssessment} />
+            ) : null}
+            {activePage === "action" ? (
+              <ActionPlanPage
+                currentCategory={currentCategory}
+                riskFactors={personalizedRiskFactors}
+                userId={userId}
+                assessmentId={latestAssessmentId ?? assessmentHistory[0]?.assessment_id ?? null}
+              />
+            ) : null}
+            {activePage === "simulator" ? (
+              <SimulatorPage currentRisk={currentRisk} currentCategory={currentCategory} />
+            ) : null}
+            {activePage === "reminders" ? (
+              <RemindersPage userId={userId} reminders={reminders} onRefresh={refreshReminders} />
+            ) : null}
+            {activePage === "navigator" ? <CareNavigator /> : null}
+            </div>
+          </div>
+        </section>
+      </main>
+      <VirtualCareChatbot />
+    </ChatbotContextProvider>
   );
+}
+
+function ChatbotContextSync({ context }: { context: ChatbotPageContext }) {
+  const { setChatbotContext } = useChatbotContext();
+
+  useEffect(() => {
+    setChatbotContext(context);
+  }, [context, setChatbotContext]);
+
+  return null;
 }
 
 function PatientSidebar({
@@ -515,15 +691,42 @@ function Dashboard({
   currentRisk,
   currentCategory,
   hasAssessment,
+  isAssessmentHistoryLoading,
   riskFactors,
+  reminders,
   setActivePage,
+  onStartAssessment,
 }: {
   currentRisk: number;
   currentCategory: RiskCategory;
   hasAssessment: boolean;
+  isAssessmentHistoryLoading: boolean;
   riskFactors: RiskFactor[];
+  reminders: ReminderRecord[];
   setActivePage: (page: PatientTab) => void;
+  onStartAssessment: () => void;
 }) {
+  if (isAssessmentHistoryLoading) {
+    return (
+      <section className="grid gap-6">
+        <Card className="p-6">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <p className="text-sm font-semibold text-cyan-700">Restoring dashboard</p>
+              <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
+                Loading your latest assessment
+              </h2>
+              <p className="mt-3 leading-7 text-slate-600">
+                Checking your saved assessment history before showing the next step.
+              </p>
+            </div>
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-cyan-100 border-t-cyan-600" />
+          </div>
+        </Card>
+      </section>
+    );
+  }
+
   if (!hasAssessment) {
     return (
       <section className="grid gap-6">
@@ -542,7 +745,7 @@ function Dashboard({
                   Answer a short set of plain-language questions about your health numbers and daily habits. After that, this dashboard will show your estimated risk, top contributors, and recommended next steps.
                 </p>
                 <div className="mt-6 flex flex-wrap gap-3">
-                  <Button onClick={() => setActivePage("assessment")}>
+                  <Button onClick={onStartAssessment}>
                     Start assessment
                     <ArrowRight className="h-4 w-4" />
                   </Button>
@@ -610,6 +813,9 @@ function Dashboard({
                 View full explanation
                 <ArrowRight className="h-4 w-4" />
               </Button>
+              <Button variant="secondary" className="ml-0 mt-3 sm:ml-3" onClick={onStartAssessment}>
+                Retake assessment
+              </Button>
             </div>
           </div>
         </Card>
@@ -631,7 +837,7 @@ function Dashboard({
       <div className="grid gap-6 xl:grid-cols-2">
         <TopRiskFactors compact factors={riskFactors} />
         <ActionPlanSummary riskFactors={riskFactors} />
-        <ReminderSummary />
+        <ReminderSummary reminders={reminders} onManage={() => setActivePage("reminders")} />
       </div>
     </section>
   );
@@ -643,12 +849,14 @@ function RiskExplorer({
   hasAssessment,
   riskFactors,
   setActivePage,
+  onStartAssessment,
 }: {
   currentRisk: number;
   currentCategory: RiskCategory;
   hasAssessment: boolean;
   riskFactors: RiskFactor[];
   setActivePage: (page: PatientTab) => void;
+  onStartAssessment: () => void;
 }) {
   if (!hasAssessment) {
     return (
@@ -665,7 +873,7 @@ function RiskExplorer({
               Complete the guided intake so the platform can estimate risk and explain the top contributing factors in simple language.
             </p>
           </div>
-          <Button onClick={() => setActivePage("assessment")}>
+          <Button onClick={onStartAssessment}>
             Start assessment
             <ArrowRight className="h-4 w-4" />
           </Button>
