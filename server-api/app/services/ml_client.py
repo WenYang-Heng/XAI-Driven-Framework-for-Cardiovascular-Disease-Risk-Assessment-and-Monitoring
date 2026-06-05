@@ -112,12 +112,9 @@ def _non_domain_payload(request: PatientAssessmentRequest) -> tuple[dict[str, An
 
 def _bp_category_value(category: str) -> float:
     return {
-        "low": 100.0,
         "normal": 115.0,
-        "elevated": 125.0,
-        "stage_1": 135.0,
-        "stage_2": 150.0,
-        "crisis": 180.0,
+        "above_normal": 135.0,
+        "well_above_normal": 155.0,
     }[category]
 
 
@@ -129,11 +126,7 @@ def _cholesterol_category(request: PatientAssessmentRequest) -> str:
             return "above_normal"
         return "normal"
     if request.cholesterol_input_type == "category" and request.cholesterol_category:
-        return {
-            "desirable": "normal",
-            "borderline": "above_normal",
-            "high": "well_above_normal",
-        }[request.cholesterol_category]
+        return request.cholesterol_category
     return "unknown"
 
 

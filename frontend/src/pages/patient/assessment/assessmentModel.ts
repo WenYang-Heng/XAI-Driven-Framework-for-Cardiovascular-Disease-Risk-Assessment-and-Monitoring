@@ -9,19 +9,22 @@ export type RiskFactor = {
 export type AssessmentForm = {
   age: number;
   sex: "female" | "male";
+  heightCm: number;
   bpInputType: "exact" | "category" | "unknown";
   systolicBp: number;
-  bpCategory: "low" | "normal" | "elevated" | "stage_1" | "stage_2" | "crisis";
+  diastolicBp: number;
+  bpCategory: "normal" | "above_normal" | "well_above_normal";
   cholesterolInputType: "exact" | "category" | "unknown";
   cholesterol: number;
-  cholesterolCategory: "desirable" | "borderline" | "high";
-  glucose: "normal" | "borderline" | "high";
+  cholesterolCategory: "normal" | "above_normal" | "well_above_normal";
+  glucoseInputType: "exact" | "category" | "unknown";
+  glucose: number;
+  glucoseCategory: "normal" | "above_normal" | "well_above_normal";
   diabetes: "no" | "prediabetes" | "yes" | "unsure";
-  smoking: "no" | "former" | "yes";
-  activity: "low" | "medium" | "high";
-  weightCategory: "healthy" | "overweight" | "obese" | "unsure";
-  bpMedication: "no" | "yes" | "unsure";
-  familyHistory: "no" | "yes" | "unsure";
+  smoking: "no" | "yes";
+  activity: "no" | "yes";
+  weightKg: number;
+  alcoholIntake: "yes" | "no";
   symptoms: "none" | "mild" | "urgent";
 };
 
@@ -55,19 +58,22 @@ export const fallbackRiskFactors: RiskFactor[] = [
 export const initialAssessment: AssessmentForm = {
   age: 45,
   sex: "female",
+  heightCm: 165,
   bpInputType: "exact",
   systolicBp: 132,
-  bpCategory: "stage_1",
+  diastolicBp: 84,
+  bpCategory: "above_normal",
   cholesterolInputType: "exact",
   cholesterol: 210,
-  cholesterolCategory: "borderline",
-  glucose: "normal",
+  cholesterolCategory: "above_normal",
+  glucoseInputType: "category",
+  glucose: 95,
+  glucoseCategory: "normal",
   diabetes: "unsure",
   smoking: "no",
-  activity: "medium",
-  weightCategory: "unsure",
-  bpMedication: "unsure",
-  familyHistory: "unsure",
+  activity: "yes",
+  weightKg: 70,
+  alcoholIntake: "no",
   symptoms: "none",
 };
 
@@ -77,13 +83,11 @@ export function calculateDemoRisk(form: AssessmentForm) {
   score += form.sex === "male" ? 1.8 : 0.8;
   score += form.bpInputType === "exact" ? Math.max(0, (form.systolicBp - 115) * 0.13) : 1.2;
   score += form.cholesterolInputType === "exact" ? Math.max(0, (form.cholesterol - 180) * 0.035) : 0.9;
-  score += form.glucose === "high" ? 3.3 : form.glucose === "borderline" ? 1.4 : 0;
+  score += glucoseCategory(form) === "well_above_normal" ? 3.3 : glucoseCategory(form) === "above_normal" ? 1.4 : 0;
   score += form.diabetes === "yes" ? 3.2 : form.diabetes === "prediabetes" ? 1.5 : form.diabetes === "unsure" ? 0.7 : 0;
-  score += form.smoking === "yes" ? 4.4 : form.smoking === "former" ? 1.2 : 0;
-  score += form.activity === "low" ? 3.2 : form.activity === "medium" ? 1.1 : 0;
-  score += form.weightCategory === "obese" ? 2.4 : form.weightCategory === "overweight" ? 1.2 : form.weightCategory === "unsure" ? 0.4 : 0;
-  score += form.bpMedication === "yes" ? 0.8 : form.bpMedication === "unsure" ? 0.4 : 0;
-  score += form.familyHistory === "yes" ? 2.2 : form.familyHistory === "unsure" ? 0.8 : 0;
+  score += form.smoking === "yes" ? 4.4 : 0;
+  score += form.activity === "no" ? 3.2 : 0;
+  score += bmi(form) >= 30 ? 2.4 : bmi(form) >= 25 ? 1.2 : 0;
   score += form.symptoms === "urgent" ? 5 : form.symptoms === "mild" ? 1.5 : 0;
 
   return Math.min(38, Math.max(5, Math.round(score * 10) / 10));
@@ -103,11 +107,11 @@ export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.activity !== "high") {
+  if (form.activity === "no") {
     factors.push({
       name: "Physical Activity",
       type: "Modifiable",
-      impact: form.activity === "low" ? "High impact" : "Medium impact",
+      impact: "High impact",
       description:
         "Being less active can affect weight, blood pressure, cholesterol, and long-term heart health.",
       action: "Start with a realistic walking or light exercise target and increase gradually.",
@@ -129,25 +133,25 @@ export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     factors.push({
       name: "Smoking Status",
       type: "Modifiable",
-      impact: form.smoking === "yes" ? "High impact" : "Medium impact",
+      impact: "High impact",
       description:
         "Smoking can damage blood vessels and increase the chance of cardiovascular problems.",
       action: "Consider a smoking reduction or cessation plan with proper support.",
     });
   }
 
-  if (form.weightCategory === "overweight" || form.weightCategory === "obese") {
+  if (bmi(form) >= 25) {
     factors.push({
-      name: "Weight Category",
+      name: "Weight / BMI",
       type: "Modifiable",
-      impact: form.weightCategory === "obese" ? "High impact" : "Medium impact",
+      impact: bmi(form) >= 30 ? "High impact" : "Medium impact",
       description:
         "Weight category can affect blood pressure, glucose control, cholesterol, and long-term cardiovascular risk.",
       action: "Focus on gradual, sustainable changes in activity, monitoring, and follow-up care.",
     });
   }
 
-  if (form.diabetes === "yes" || form.glucose === "high") {
+  if (form.diabetes === "yes" || glucoseCategory(form) === "well_above_normal") {
     factors.push({
       name: "Blood Sugar Control",
       type: "Modifiable",
@@ -158,9 +162,9 @@ export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.familyHistory === "yes" || form.age >= 55) {
+  if (form.age >= 55) {
     factors.push({
-      name: form.familyHistory === "yes" ? "Family History" : "Age Group",
+      name: "Age Group",
       type: "Non-modifiable",
       impact: "Medium impact",
       description:
@@ -170,4 +174,20 @@ export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
   }
 
   return factors.length ? factors.slice(0, 3) : fallbackRiskFactors;
+}
+
+function bmi(form: AssessmentForm) {
+  return form.weightKg / ((form.heightCm / 100) ** 2);
+}
+
+function glucoseCategory(form: AssessmentForm) {
+  if (form.glucoseInputType === "exact") {
+    if (form.glucose >= 126) return "well_above_normal";
+    if (form.glucose >= 100) return "above_normal";
+    return "normal";
+  }
+  if (form.glucoseInputType === "category") {
+    return form.glucoseCategory;
+  }
+  return "normal";
 }

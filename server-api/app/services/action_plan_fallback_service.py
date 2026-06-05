@@ -152,4 +152,4 @@ def _high_cholesterol(assessment_input: dict[str, Any]) -> bool:
 def _high_blood_pressure(assessment_input: dict[str, Any]) -> bool:
     category = assessment_input.get("bp_category")
     value = assessment_input.get("systolic_bp")
-    return category in {"stage_1", "stage_2", "crisis"} or (value is not None and float(value) >= 130)
+    return category in {"above_normal", "well_above_normal"} or (value is not None and float(value) >= 130)

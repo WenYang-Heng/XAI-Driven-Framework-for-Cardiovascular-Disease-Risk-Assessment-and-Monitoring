@@ -236,7 +236,7 @@ export function SimulatorPage({ currentRisk, currentCategory }: SimulatorPagePro
           <ControlSection title="Health numbers">
             <SliderControl icon={HeartPulse} label="Systolic blood pressure" value={scenario.systolicBp} min={105} max={180} step={1} unit="mmHg" onChange={(value) => updateScenario("systolicBp", value)} helper="The upper number in a reading such as 132/84." />
             <SliderControl icon={Stethoscope} label="Total cholesterol" value={scenario.cholesterol} min={150} max={280} step={5} unit="mg/dL" onChange={(value) => updateScenario("cholesterol", value)} helper="Use recent clinic values when available." />
-            <SliderControl icon={Droplets} label="Blood glucose level" value={scenario.glucose} min={0} max={2} step={1} unit="/ 2" onChange={(value) => updateScenario("glucose", value)} helper="0 = normal, 1 = borderline, 2 = high." />
+            <SliderControl icon={Droplets} label="Blood glucose level" value={scenario.glucose} min={0} max={2} step={1} unit="/ 2" onChange={(value) => updateScenario("glucose", value)} helper="0 = normal, 1 = above normal, 2 = well above normal." />
             <SliderControl icon={Scale} label="Weight change goal" value={scenario.weightGoal} min={0} max={15} step={1} unit="kg" onChange={(value) => updateScenario("weightGoal", value)} helper="Large short-term targets may be unrealistic." />
             <SliderControl icon={ShieldAlert} label="Medication adherence" value={scenario.medicationAdherence} min={1} max={5} step={1} unit="/ 5" onChange={(value) => updateScenario("medicationAdherence", value)} helper="Only applies if medication was prescribed." />
           </ControlSection>

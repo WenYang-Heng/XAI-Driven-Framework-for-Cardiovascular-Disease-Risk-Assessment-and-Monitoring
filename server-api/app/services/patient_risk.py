@@ -2,18 +2,15 @@ from app.models import PatientAssessmentPrediction, PatientAssessmentRequest, Pa
 
 
 BP_CATEGORY_VALUES = {
-    "low": 100.0,
     "normal": 115.0,
-    "elevated": 125.0,
-    "stage_1": 135.0,
-    "stage_2": 150.0,
-    "crisis": 180.0,
+    "above_normal": 135.0,
+    "well_above_normal": 155.0,
 }
 
 CHOLESTEROL_CATEGORY_VALUES = {
-    "desirable": 170.0,
-    "borderline": 220.0,
-    "high": 260.0,
+    "normal": 170.0,
+    "above_normal": 220.0,
+    "well_above_normal": 260.0,
 }
 
 
@@ -135,7 +132,6 @@ def _diabetes_points(value: str) -> float:
 def _smoking_points(value: str) -> float:
     return {
         "no": 0.0,
-        "former": 0.7,
         "yes": 2.4,
     }[value]
 
@@ -203,7 +199,7 @@ def _explanation(
     if cholesterol >= 240:
         messages.append("Cholesterol is a major contributor in this estimate.")
     elif cholesterol >= 200:
-        messages.append("Cholesterol is above the desirable range.")
+        messages.append("Cholesterol is above the usual healthy range.")
 
     if request.smoking_status == "yes":
         messages.append("Current smoking increases the estimated risk.")

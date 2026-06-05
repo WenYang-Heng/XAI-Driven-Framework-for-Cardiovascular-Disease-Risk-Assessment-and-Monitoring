@@ -198,10 +198,10 @@ class BatchConfirmRequest(BaseModel):
 
 PatientSex = Literal["female", "male"]
 PatientInputType = Literal["exact", "category", "unknown"]
-BpCategory = Literal["low", "normal", "elevated", "stage_1", "stage_2", "crisis"]
-CholesterolCategory = Literal["desirable", "borderline", "high"]
+BpCategory = Literal["normal", "above_normal", "well_above_normal"]
+CholesterolCategory = Literal["normal", "above_normal", "well_above_normal"]
 DiabetesHistory = Literal["no", "prediabetes", "yes", "unsure"]
-SmokingStatus = Literal["no", "former", "yes"]
+SmokingStatus = Literal["no", "yes"]
 ActivityLevel = Literal["low", "medium", "high"]
 WeightCategory = Literal["healthy", "overweight", "obese", "unsure"]
 PatientRiskLevel = Literal["low", "moderate", "high"]
