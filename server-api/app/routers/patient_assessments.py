@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.models import PatientAssessmentRequest, PatientSimulationRequest
-from app.services import patient_risk, storage
+from app.services import ml_client, patient_risk, storage
 
 
 router = APIRouter(prefix="/api/patient-assessments", tags=["patient assessments"])
@@ -9,7 +9,10 @@ router = APIRouter(prefix="/api/patient-assessments", tags=["patient assessments
 
 @router.post("")
 async def create_patient_assessment(request: PatientAssessmentRequest) -> dict:
-    prediction = patient_risk.predict_patient_risk(request)
+    try:
+        prediction = await ml_client.predict_non_domain_patient_risk(request)
+    except Exception:
+        prediction = patient_risk.predict_patient_risk(request)
     assessment_id, assessment_input_id = await storage.save_patient_assessment(
         request.model_dump(),
         prediction.model_dump(),

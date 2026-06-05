@@ -206,23 +206,29 @@ ActivityLevel = Literal["low", "medium", "high"]
 WeightCategory = Literal["healthy", "overweight", "obese", "unsure"]
 PatientRiskLevel = Literal["low", "moderate", "high"]
 PatientConfidenceLevel = Literal["low", "medium", "high"]
+GlucoseCategory = Literal["normal", "above_normal", "well_above_normal", "unknown"]
+YesNo = Literal["yes", "no"]
 
 
 class PatientAssessmentRequest(BaseModel):
     user_id: str
     age: int = Field(..., ge=18, le=120)
     sex: PatientSex
+    height_cm: float | None = Field(None, ge=120, le=220)
     bp_input_type: PatientInputType
     systolic_bp: float | None = Field(None, ge=70, le=260)
+    diastolic_bp: float | None = Field(None, ge=40, le=140)
     bp_category: BpCategory | None = None
     cholesterol_input_type: PatientInputType
     total_cholesterol: float | None = Field(None, ge=80, le=500)
     cholesterol_category: CholesterolCategory | None = None
+    glucose_category: GlucoseCategory = "unknown"
     diabetes_history: DiabetesHistory = "unsure"
     smoking_status: SmokingStatus = "no"
     activity_level: ActivityLevel = "medium"
     weight: float | None = Field(None, ge=20, le=350)
     weight_category: WeightCategory = "unsure"
+    alcohol_intake: YesNo = "no"
 
     @model_validator(mode="after")
     def validate_input_modes(self) -> "PatientAssessmentRequest":
@@ -234,6 +240,8 @@ class PatientAssessmentRequest(BaseModel):
             raise ValueError("total_cholesterol is required when cholesterol_input_type is exact")
         if self.cholesterol_input_type == "category" and self.cholesterol_category is None:
             raise ValueError("cholesterol_category is required when cholesterol_input_type is category")
+        if self.diastolic_bp is not None and self.systolic_bp is not None and self.diastolic_bp >= self.systolic_bp:
+            raise ValueError("diastolic_bp must be lower than systolic_bp")
         return self
 
 

@@ -14,6 +14,9 @@ from app.schemas import (
     ModelInfo,
     ModelListResponse,
     ModelMetricsResponse,
+    NonDomainExplanation,
+    NonDomainPredictionResponse,
+    NonDomainTopFactor,
     RiskPredictionResponse,
     ShapExplanation,
     XaiExplanation,
@@ -100,6 +103,45 @@ def test_predict_returns_risk_score(monkeypatch):
     assert response.json()["xai"]["summary"]
 
 
+def test_non_domain_predict_returns_patient_friendly_response(monkeypatch):
+    from app.routers import predict
+
+    monkeypatch.setattr(
+        predict,
+        "predict_non_domain_risk",
+        lambda request: NonDomainPredictionResponse(
+            risk_score=0.16,
+            risk_percentage=16.0,
+            risk_category="moderate",
+            confidence_level="medium",
+            estimated_inputs={"glucose": 1},
+            missing_inputs=["glucose"],
+            explanation=NonDomainExplanation(
+                method="FEATURE_IMPORTANCE",
+                top_factors=[
+                    NonDomainTopFactor(
+                        feature="ap_hi",
+                        user_friendly_label="Systolic blood pressure",
+                        direction="increased_risk",
+                        importance=0.4,
+                        plain_language="Systolic blood pressure increased your estimated risk in this prediction.",
+                        input_value=130,
+                    )
+                ],
+            ),
+            model_used="non_domain_cvd_model",
+            disclaimer="This result is an estimate and is not a medical diagnosis.",
+        ),
+    )
+
+    response = client.post("/predict/non-domain", json=_non_domain_payload())
+
+    assert response.status_code == 200
+    assert response.json()["risk_score"] == 0.16
+    assert response.json()["risk_percentage"] == 16.0
+    assert response.json()["explanation"]["top_factors"][0]["user_friendly_label"] == "Systolic blood pressure"
+
+
 def test_model_metrics_returns_metrics(monkeypatch):
     from app.routers import predict
 
@@ -127,6 +169,38 @@ def test_model_metrics_returns_metrics(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["accuracy"] == 0.85
+
+
+def test_non_domain_dataset_missing_file_has_clear_message(tmp_path):
+    from app.services.non_domain_dataset import NonDomainDatasetError, load_raw_cardio_dataset
+
+    missing_path = tmp_path / "cardio_train.csv"
+
+    try:
+        load_raw_cardio_dataset(missing_path)
+    except NonDomainDatasetError as exc:
+        assert "place cardio_train.csv" in str(exc)
+        assert str(missing_path) in str(exc)
+    else:
+        raise AssertionError("Expected missing Kaggle dataset error")
+
+
+def test_non_domain_cleaning_removes_unrealistic_bp_rows():
+    from app.services.non_domain_dataset import clean_cardio_dataset
+
+    dataframe = pd.DataFrame(
+        [
+            _cardio_row(ap_hi=130, ap_lo=80, cardio=1),
+            _cardio_row(ap_hi=70, ap_lo=80, cardio=0),
+            _cardio_row(ap_hi=130, ap_lo=150, cardio=0),
+        ]
+    )
+
+    cleaned, metadata = clean_cardio_dataset(dataframe)
+
+    assert len(cleaned) == 1
+    assert metadata["rows_after_cleaning"] == 1
+    assert metadata["class_balance"] == {"1": 1}
 
 
 def test_batch_rejects_unsupported_file_type():
@@ -219,6 +293,39 @@ def _prediction_payload() -> dict:
         "slope": 2,
         "ca": 0,
         "thal": 7,
+    }
+
+
+def _non_domain_payload() -> dict:
+    return {
+        "age": 45,
+        "sex": "male",
+        "height_cm": 170,
+        "weight_kg": 75,
+        "systolic_bp": 130,
+        "diastolic_bp": 85,
+        "cholesterol_category": "normal",
+        "glucose_category": "unknown",
+        "smoking_status": "no",
+        "physical_activity": "yes",
+        "alcohol_intake": "no",
+    }
+
+
+def _cardio_row(ap_hi: int, ap_lo: int, cardio: int) -> dict:
+    return {
+        "age": 45 * 365,
+        "gender": 2,
+        "height": 170,
+        "weight": 75,
+        "ap_hi": ap_hi,
+        "ap_lo": ap_lo,
+        "cholesterol": 1,
+        "gluc": 1,
+        "smoke": 0,
+        "active": 1,
+        "alco": 0,
+        "cardio": cardio,
     }
 
 

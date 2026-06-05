@@ -114,3 +114,27 @@ Invoke-RestMethod `
 ```
 
 CSV, XLSX, and XLS uploads are supported. Invalid rows return row-level errors instead of failing the entire upload.
+
+## Non-Domain Expert Model
+
+The service also includes a separate patient-friendly model path for the Kaggle Cardiovascular Disease Dataset.
+
+Expected dataset path:
+
+```text
+server-ml/app/data/raw/cardio_train.csv
+```
+
+Train and compare models:
+
+```powershell
+python -m app.scripts.train_non_domain_model
+```
+
+Prediction endpoint:
+
+```text
+POST /predict/non-domain
+```
+
+See [NON_DOMAIN_MODEL.md](NON_DOMAIN_MODEL.md) for dataset setup, cleaning rules, model comparison, XAI behavior, and limitations.

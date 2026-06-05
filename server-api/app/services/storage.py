@@ -542,17 +542,21 @@ async def save_patient_assessment(request_payload: dict[str, Any], prediction: d
         "assessment_id": assessment_id,
         "age": request_payload["age"],
         "sex": 1 if request_payload["sex"] == "male" else 0,
+        "height_cm": request_payload.get("height_cm"),
         "bp_input_type": request_payload["bp_input_type"],
         "systolic_bp": request_payload.get("systolic_bp"),
+        "diastolic_bp": request_payload.get("diastolic_bp"),
         "bp_category": request_payload.get("bp_category"),
         "cholesterol_input_type": request_payload["cholesterol_input_type"],
         "total_cholesterol": request_payload.get("total_cholesterol"),
         "cholesterol_category": request_payload.get("cholesterol_category"),
+        "glucose_category": request_payload.get("glucose_category"),
         "diabetes_history": request_payload.get("diabetes_history"),
         "smoking_status": request_payload.get("smoking_status"),
         "activity_level": request_payload.get("activity_level"),
         "weight": request_payload.get("weight"),
         "weight_category": request_payload.get("weight_category"),
+        "alcohol_intake": request_payload.get("alcohol_intake"),
         "created_at": _now(),
     }
     _assessment_inputs.append(input_record)
@@ -584,17 +588,21 @@ def patient_assessment_history(user_id: str) -> list[dict[str, Any]]:
               a.explanation,
               ai.age,
               ai.sex,
+              ai.height_cm,
               ai.bp_input_type,
               ai.systolic_bp,
+              ai.diastolic_bp,
               ai.bp_category,
               ai.cholesterol_input_type,
               ai.total_cholesterol,
               ai.cholesterol_category,
+              ai.glucose_category,
               ai.diabetes_history,
               ai.smoking_status,
               ai.activity_level,
               ai.weight,
-              ai.weight_category
+              ai.weight_category,
+              ai.alcohol_intake
             from public.assessments a
             left join public.assessments_input ai on ai.assessment_id = a.assessment_id
             where a.user_id = %(user_id)s
