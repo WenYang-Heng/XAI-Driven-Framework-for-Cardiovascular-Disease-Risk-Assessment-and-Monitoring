@@ -48,7 +48,13 @@ async def predict_non_domain_patient_risk(request: PatientAssessmentRequest) -> 
     ]
     if not explanation_messages:
         explanation_messages = ["The non-domain ML model estimated your CVD risk from patient-friendly inputs."]
-    explanation_messages.append(data.get("disclaimer", "This result is an estimate and is not a medical diagnosis."))
+    disclaimer = data.get("disclaimer", "This result is an estimate and is not a medical diagnosis.")
+    explanation_messages.append(disclaimer)
+    structured_explanation = {
+        "summary": explanation_messages,
+        "xai": explanation if isinstance(explanation, dict) else {"method": "UNKNOWN", "top_factors": []},
+        "disclaimer": disclaimer,
+    }
 
     estimated_inputs = {**data.get("estimated_inputs", {}), **locally_estimated}
     missing_inputs = sorted(set(data.get("missing_inputs", []) + locally_missing))
@@ -65,7 +71,7 @@ async def predict_non_domain_patient_risk(request: PatientAssessmentRequest) -> 
         prediction_method="non_domain_ml_model",
         estimated_inputs=estimated_inputs,
         missing_inputs=missing_inputs,
-        explanation=explanation_messages,
+        explanation=structured_explanation,
     )
 
 

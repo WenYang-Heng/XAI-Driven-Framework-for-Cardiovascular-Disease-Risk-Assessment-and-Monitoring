@@ -15,12 +15,13 @@ import { Button } from "../../components/ui/Button";
 import { Card, CardHeader } from "../../components/ui/Card";
 import { API_BASE_URL } from "../domain-expert/constants";
 import { ActionPlanPage } from "./action-plan/ActionPlanPage";
-import { AssessmentHistoryPage, type AssessmentHistoryItem } from "./assessment-history/AssessmentHistoryPage";
+import { AssessmentHistoryPage, type AssessmentHistoryItem, type PatientExplanation, type XaiTopFactor } from "./assessment-history/AssessmentHistoryPage";
 import { RiskAssessment as PatientRiskAssessment } from "./assessment/RiskAssessment";
 import { ChatbotContextProvider, useChatbotContext, type ChatbotPageContext } from "./chatbot/ChatbotContext";
 import { VirtualCareChatbot } from "./chatbot/VirtualCareChatbot";
 import { RemindersPage } from "./reminders/RemindersPage";
 import { fetchReminders, type ReminderRecord } from "./reminders/reminderApi";
+import { RiskExplorerPage } from "./risk-explorer/RiskExplorerPage";
 import { SimulatorPage } from "./simulator/SimulatorPage";
 
 type PatientTab =
@@ -52,6 +53,11 @@ type RiskFactor = {
   impact: string;
   description: string;
   action: string;
+  importance?: number;
+  method?: string;
+  supportingMethod?: string;
+  consistencyNote?: string;
+  direction?: "increased_risk" | "decreased_risk";
 };
 
 type AssessmentForm = {
@@ -86,7 +92,7 @@ type PatientPrediction = {
     total_cholesterol?: number | null;
   };
   missing_inputs: string[];
-  explanation: string[];
+  explanation: PatientExplanation;
 };
 
 type CurrentUser = {
@@ -236,66 +242,114 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
   return factors.length ? factors.slice(0, 3) : riskFactors;
 }
 
-function buildSavedRiskFactors(explanation: string[] | undefined, fallback: RiskFactor[]): RiskFactor[] {
-  const usableExplanations = (explanation ?? [])
+function buildSavedRiskFactors(explanation: PatientExplanation | undefined, fallback: RiskFactor[]): RiskFactor[] {
+  if (explanation && !Array.isArray(explanation) && explanation.xai?.top_factors?.length) {
+    const increasedRiskFactors = explanation.xai.top_factors.filter((factor) => factor.direction === "increased_risk");
+    const displayFactors = increasedRiskFactors.length ? increasedRiskFactors : explanation.xai.top_factors;
+
+    return displayFactors
+      .slice(0, 5)
+      .map((factor, index) =>
+        xaiFactorToRiskFactor(
+          factor,
+          explanation.xai?.method,
+          explanation.xai?.supporting_method,
+          index === 0 ? explanation.xai?.consistency_note : undefined,
+        ),
+      );
+  }
+
+  const messages = Array.isArray(explanation) ? explanation : explanation?.summary;
+  const usableMessages = (messages ?? [])
     .filter((message) => message && !message.toLowerCase().includes("not a medical diagnosis"))
     .slice(0, 4);
 
-  if (!usableExplanations.length) {
+  if (!usableMessages.length) {
     return fallback;
   }
 
-  return usableExplanations.map((message) => {
-    const name = factorNameFromExplanation(message);
-    return {
-      name,
-      type: name === "Age" ? "Non-modifiable" : "Modifiable",
-      impact: "Model explained factor",
-      description: message,
-      action: actionFromFactorName(name),
-    };
-  });
+  const mappedFactors: RiskFactor[] = usableMessages
+    .map((message) => {
+      const name = factorNameFromPlainLanguage(message);
+      return {
+        name,
+        type: name === "Age" ? "Non-modifiable" : "Modifiable",
+        impact: "Assessment factor",
+        description: message,
+        action: actionFromFactorName(name),
+      };
+    })
+    .filter((factor) => factor.name !== "Model Factor");
+
+  return mappedFactors.length ? mappedFactors : fallback;
 }
 
-function factorNameFromExplanation(message: string) {
-  const lower = message.toLowerCase();
-  if (lower.includes("systolic") || lower.includes("diastolic") || lower.includes("blood pressure")) {
+function xaiFactorToRiskFactor(
+  factor: XaiTopFactor,
+  method?: string,
+  supportingMethod?: string,
+  consistencyNote?: string,
+): RiskFactor {
+  const name = factorLabel(factor);
+  const displayMethod = method ? methodLabelForXai(method) : "XAI";
+  return {
+    name,
+    type: factor.feature === "age_years" ? "Non-modifiable" : "Modifiable",
+    impact: `${displayMethod} factor`,
+    description: factor.plain_language,
+    action: actionFromFactorName(name),
+    importance: importancePercent(factor),
+    method: displayMethod,
+    supportingMethod,
+    consistencyNote,
+    direction: factor.direction,
+  };
+}
+
+function factorLabel(factor: XaiTopFactor) {
+  if (factor.feature === "ap_hi" || factor.feature === "ap_lo") {
     return "Blood Pressure";
   }
-  if (lower.includes("cholesterol")) {
-    return "Cholesterol";
-  }
-  if (lower.includes("blood sugar") || lower.includes("glucose")) {
-    return "Blood Sugar";
-  }
-  if (lower.includes("physical activity") || lower.includes("activity")) {
-    return "Physical Activity";
-  }
-  if (lower.includes("smoking")) {
-    return "Smoking Status";
-  }
-  if (lower.includes("bmi") || lower.includes("weight")) {
-    return "Weight / BMI";
-  }
-  if (lower.includes("age")) {
-    return "Age";
-  }
-  if (lower.includes("alcohol")) {
-    return "Alcohol Intake";
-  }
+  return factor.user_friendly_label;
+}
+
+function importancePercent(factor: XaiTopFactor) {
+  return factor.importance_percentage ?? Math.round(factor.importance * 1000) / 10;
+}
+
+function methodLabelForXai(method: string) {
+  if (method === "FEATURE_IMPORTANCE") return "Feature importance";
+  if (method === "COEFFICIENT") return "Model coefficient";
+  if (method === "FALLBACK") return "Model fallback";
+  return method;
+}
+
+function factorNameFromPlainLanguage(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes("systolic") || lower.includes("diastolic") || lower.includes("blood pressure")) return "Blood Pressure";
+  if (lower.includes("cholesterol")) return "Cholesterol level";
+  if (lower.includes("blood sugar") || lower.includes("glucose")) return "Blood sugar level";
+  if (lower.includes("physical activity") || lower.includes("activity")) return "Physical activity";
+  if (lower.includes("smoking")) return "Smoking status";
+  if (lower.includes("bmi") || lower.includes("weight")) return "Weight category / BMI";
+  if (lower.includes("age")) return "Age";
+  if (lower.includes("alcohol")) return "Alcohol intake";
   return "Model Factor";
 }
 
 function actionFromFactorName(name: string) {
   const actions: Record<string, string> = {
     "Blood Pressure": "Monitor blood pressure and reduce salty foods where possible.",
-    Cholesterol: "Choose more fibre-rich foods and follow up on cholesterol testing if needed.",
-    "Blood Sugar": "Use glucose readings from health checks and discuss unclear values with a healthcare professional.",
-    "Physical Activity": "Start with regular light movement, such as walking, and increase gradually.",
-    "Smoking Status": "Consider a smoking reduction or cessation plan with proper support.",
-    "Weight / BMI": "Focus on gradual, sustainable changes in activity and food choices.",
+    "Systolic blood pressure": "Monitor blood pressure and reduce salty foods where possible.",
+    "Diastolic blood pressure": "Monitor blood pressure and reduce salty foods where possible.",
+    "Cholesterol level": "Choose more fibre-rich foods and follow up on cholesterol testing if needed.",
+    "Blood sugar level": "Use glucose readings from health checks and discuss unclear values with a healthcare professional.",
+    "Physical activity": "Start with regular light movement, such as walking, and increase gradually.",
+    "Smoking status": "Consider a smoking reduction or cessation plan with proper support.",
+    "Weight category / BMI": "Focus on gradual, sustainable changes in activity and food choices.",
     Age: "Focus on modifiable factors such as blood pressure, activity, smoking, and monitoring.",
-    "Alcohol Intake": "Keep alcohol intake moderate and follow health professional guidance.",
+    Sex: "Focus on modifiable factors and regular monitoring.",
+    "Alcohol intake": "Keep alcohol intake moderate and follow health professional guidance.",
   };
   return actions[name] ?? "Review this factor and consider a practical next step.";
 }
@@ -611,7 +665,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
               />
             ) : null}
             {activePage === "risk" ? (
-              <RiskExplorer
+              <RiskExplorerPage
                 currentRisk={currentRisk}
                 currentCategory={currentCategory}
                 hasAssessment={hasAssessment}
@@ -850,7 +904,7 @@ function TopRiskFactors({
       <div className="mb-5 flex items-start justify-between gap-4">
         <CardHeader
           title="Top contributing factors"
-          subtitle="XAI explanation"
+          subtitle="Model explanation from the latest saved assessment"
         />
         {compact ? <Button variant="ghost">Details</Button> : null}
       </div>
@@ -865,11 +919,37 @@ function TopRiskFactors({
                   {factor.impact}
                 </p>
               </div>
-              <Tag tone={factor.type === "Modifiable" ? "green" : "slate"}>{factor.type}</Tag>
+              <div className="flex flex-wrap gap-2">
+                {factor.direction ? (
+                  <Tag tone={factor.direction === "increased_risk" ? "amber" : "green"}>
+                    {factor.direction === "increased_risk" ? "Increased risk" : "Lowered risk"}
+                  </Tag>
+                ) : null}
+                <Tag tone={factor.type === "Modifiable" ? "green" : "slate"}>{factor.type}</Tag>
+              </div>
             </div>
+            {typeof factor.importance === "number" ? (
+              <div className="mt-3">
+                <div className="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <span>
+                    {factor.method ?? "XAI"}
+                    {factor.supportingMethod ? ` + ${factor.supportingMethod}` : ""} importance
+                  </span>
+                  <span>{factor.importance}%</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-full rounded-full bg-cyan-600" style={{ width: `${Math.min(100, Math.max(0, factor.importance))}%` }} />
+                </div>
+              </div>
+            ) : null}
             <p className="mt-3 leading-7 text-slate-600">
               {compact ? `${factor.description.slice(0, 92)}...` : factor.description}
             </p>
+            {factor.consistencyNote && !compact ? (
+              <p className="mt-3 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm leading-6 text-cyan-800">
+                {factor.consistencyNote}
+              </p>
+            ) : null}
             {!compact ? (
               <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
                 <strong className="text-slate-900">Suggested action:</strong> {factor.action}

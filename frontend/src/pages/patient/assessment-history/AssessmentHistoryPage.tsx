@@ -25,7 +25,33 @@ export type AssessmentHistoryItem = {
   cholesterol_input_type?: string;
   total_cholesterol?: number | null;
   cholesterol_category?: string | null;
-  explanation?: string[];
+  explanation?: PatientExplanation;
+};
+
+export type PatientExplanation =
+  | string[]
+  | {
+      summary?: string[];
+      xai?: {
+        method?: string;
+        top_factors?: XaiTopFactor[];
+        supporting_method?: string;
+        lime_top_factors?: XaiTopFactor[];
+        consistency_note?: string;
+        fallback_reason?: string;
+        lime_fallback_reason?: string;
+      };
+      disclaimer?: string;
+    };
+
+export type XaiTopFactor = {
+  feature: string;
+  user_friendly_label: string;
+  direction: "increased_risk" | "decreased_risk";
+  importance: number;
+  importance_percentage?: number;
+  plain_language: string;
+  input_value: number;
 };
 
 type AssessmentHistoryPageProps = {
@@ -71,6 +97,19 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
         </Card>
       ) : (
         <>
+          <Card className="grid gap-4 p-6 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <h3 className="text-xl font-bold tracking-tight text-slate-950">Take a new assessment</h3>
+              <p className="mt-2 leading-7 text-slate-600">
+                Retake the assessment when your health details change or you want a fresh risk estimate.
+              </p>
+            </div>
+            <Button onClick={onStartAssessment}>
+              Retake assessment
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Card>
+
           <Card className="p-6">
             <CardHeader
               title="Risk score trend"
@@ -143,7 +182,7 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
                         {methodLabel(item.prediction_method)}
                       </td>
                       <td className="max-w-lg px-5 py-4 leading-6 text-slate-600">
-                        {item.explanation?.[0] ?? "No explanation saved."}
+                        {explanationSummary(item.explanation)}
                       </td>
                     </tr>
                   ))}
@@ -155,6 +194,13 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
       )}
     </section>
   );
+}
+
+function explanationSummary(explanation?: PatientExplanation) {
+  if (Array.isArray(explanation)) {
+    return explanation[0] ?? "No explanation saved.";
+  }
+  return explanation?.summary?.[0] ?? explanation?.xai?.top_factors?.[0]?.plain_language ?? "No explanation saved.";
 }
 
 function confidenceTone(level: string): "green" | "amber" | "red" {

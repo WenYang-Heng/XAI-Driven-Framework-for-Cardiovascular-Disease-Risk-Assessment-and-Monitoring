@@ -1,5 +1,4 @@
-from typing import Literal
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -261,7 +260,7 @@ class PatientAssessmentPrediction(BaseModel):
     prediction_method: str
     estimated_inputs: dict[str, float | None]
     missing_inputs: list[str]
-    explanation: list[str]
+    explanation: list[str] | dict[str, Any]
 
 
 class PatientAssessmentResponse(BaseModel):

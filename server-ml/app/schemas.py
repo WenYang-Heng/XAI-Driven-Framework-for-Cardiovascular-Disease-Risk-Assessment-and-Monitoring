@@ -83,6 +83,7 @@ class NonDomainTopFactor(BaseModel):
     user_friendly_label: str
     direction: Literal["increased_risk", "decreased_risk"]
     importance: float
+    importance_percentage: float | None = None
     plain_language: str
     input_value: float
 
@@ -90,6 +91,11 @@ class NonDomainTopFactor(BaseModel):
 class NonDomainExplanation(BaseModel):
     method: str
     top_factors: list[NonDomainTopFactor]
+    supporting_method: str | None = None
+    lime_top_factors: list[NonDomainTopFactor] | None = None
+    consistency_note: str | None = None
+    fallback_reason: str | None = None
+    lime_fallback_reason: str | None = None
 
 
 class NonDomainPredictionResponse(BaseModel):

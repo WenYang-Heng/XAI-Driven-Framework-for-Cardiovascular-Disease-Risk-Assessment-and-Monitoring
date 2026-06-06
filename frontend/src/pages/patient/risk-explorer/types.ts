@@ -9,4 +9,9 @@ export type RiskFactor = {
   impact: string;
   description: string;
   action: string;
+  importance?: number;
+  method?: string;
+  supportingMethod?: string;
+  consistencyNote?: string;
+  direction?: "increased_risk" | "decreased_risk";
 };

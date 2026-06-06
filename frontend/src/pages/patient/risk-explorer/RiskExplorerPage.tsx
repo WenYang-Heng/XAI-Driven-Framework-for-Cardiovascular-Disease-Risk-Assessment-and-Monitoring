@@ -9,6 +9,7 @@ type RiskExplorerPageProps = {
   currentRisk: number;
   currentCategory: RiskCategory;
   hasAssessment: boolean;
+  isAssessmentHistoryLoading?: boolean;
   riskFactors: RiskFactor[];
   onStartAssessment: () => void;
 };
@@ -17,9 +18,31 @@ export function RiskExplorerPage({
   currentRisk,
   currentCategory,
   hasAssessment,
+  isAssessmentHistoryLoading = false,
   riskFactors,
   onStartAssessment,
 }: RiskExplorerPageProps) {
+  if (isAssessmentHistoryLoading) {
+    return (
+      <section className="grid gap-6">
+        <Card className="p-6">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <p className="text-sm font-semibold text-cyan-700">Risk explanation module</p>
+              <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">
+                Loading your latest assessment
+              </h2>
+              <p className="mt-3 leading-7 text-slate-600">
+                Checking your saved assessment history before showing your risk explanation.
+              </p>
+            </div>
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-cyan-100 border-t-cyan-600" />
+          </div>
+        </Card>
+      </section>
+    );
+  }
+
   if (!hasAssessment) {
     return (
       <section className="grid gap-6">

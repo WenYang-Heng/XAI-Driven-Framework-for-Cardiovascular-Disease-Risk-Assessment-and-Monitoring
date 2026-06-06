@@ -9,21 +9,26 @@ router = APIRouter(prefix="/api/patient-assessments", tags=["patient assessments
 
 @router.post("")
 async def create_patient_assessment(request: PatientAssessmentRequest) -> dict:
+    fallback_reason = None
     try:
         prediction = await ml_client.predict_non_domain_patient_risk(request)
-    except Exception:
+    except Exception as error:
+        fallback_reason = str(error)
         prediction = patient_risk.predict_patient_risk(request)
     assessment_id, assessment_input_id = await storage.save_patient_assessment(
         request.model_dump(),
         prediction.model_dump(),
     )
 
-    return {
+    response = {
         "success": True,
         "assessment_id": assessment_id,
         "assessment_input_id": assessment_input_id,
         "prediction": prediction.model_dump(),
     }
+    if fallback_reason:
+        response["fallback_reason"] = fallback_reason
+    return response
 
 
 @router.get("/history/{user_id}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import pickle
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -144,7 +145,7 @@ def train_and_compare_non_domain_models() -> dict[str, Any]:
         "target_definition": "cardio = 1 indicates cardiovascular disease in the Kaggle dataset.",
         "risk_thresholds": {"low": "<0.10", "moderate": "0.10 to <0.20", "high": ">=0.20"},
         "threshold_note": "TODO: Calibrate prototype risk thresholds against clinical target probabilities before production use.",
-        "explanation_method": "SHAP when available; feature importance or coefficients as fallback.",
+        "explanation_method": "SHAP as the primary local explanation when available, LIME as a supporting consistency check, and feature importance or coefficients as fallback.",
         "limitations": [
             "The model is used for educational risk estimation in a prototype system.",
             "It does not provide a medical diagnosis and should not replace professional medical advice.",
@@ -263,9 +264,20 @@ def _risk_category(score: float) -> str:
 
 def _explain_prediction(model: Pipeline, row: pd.DataFrame, metadata: dict[str, Any]) -> dict[str, Any]:
     try:
-        return _shap_explanation(model, row, metadata)
-    except Exception:
-        return _fallback_explanation(model, row, metadata)
+        explanation = _shap_explanation(model, row, metadata)
+    except Exception as error:
+        explanation = _fallback_explanation(model, row, metadata)
+        explanation["fallback_reason"] = str(error)
+
+    try:
+        lime_top_factors = _lime_explanation(model, row, metadata)
+        explanation["supporting_method"] = "LIME"
+        explanation["lime_top_factors"] = lime_top_factors
+        explanation["consistency_note"] = _consistency_note(explanation["top_factors"], lime_top_factors)
+    except Exception as error:
+        explanation["lime_fallback_reason"] = str(error)
+
+    return explanation
 
 
 def _shap_explanation(model: Pipeline, row: pd.DataFrame, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -274,11 +286,14 @@ def _shap_explanation(model: Pipeline, row: pd.DataFrame, metadata: dict[str, An
     classifier = model.named_steps["classifier"]
     transformed = model.named_steps["imputer"].transform(row)
     explainer = shap.TreeExplainer(classifier)
-    shap_values = explainer.shap_values(transformed)
-    if isinstance(shap_values, list):
-        values = np.asarray(shap_values[-1][0])
+    explanation = explainer(transformed)
+    values = np.asarray(explanation.values)
+    if values.ndim == 3:
+        values = values[0, :, -1]
+    elif values.ndim == 2:
+        values = values[0]
     else:
-        values = np.asarray(shap_values[0])
+        values = np.asarray(values).reshape(-1)
     return {"method": "SHAP", "top_factors": _top_factors(metadata["feature_columns"], row.iloc[0], values)}
 
 
@@ -296,6 +311,57 @@ def _fallback_explanation(model: Pipeline, row: pd.DataFrame, metadata: dict[str
     return {"method": method, "top_factors": _top_factors(metadata["feature_columns"], row.iloc[0], values)}
 
 
+@lru_cache(maxsize=1)
+def _background_sample() -> pd.DataFrame:
+    features, _, _ = load_cardio_dataset()
+    sample_size = min(80, len(features))
+    return features.sample(n=sample_size, random_state=42).reset_index(drop=True)
+
+
+@lru_cache(maxsize=1)
+def _lime_explainer(feature_columns: tuple[str, ...]) -> Any:
+    from lime.lime_tabular import LimeTabularExplainer
+
+    background = _background_sample().loc[:, list(feature_columns)]
+    return LimeTabularExplainer(
+        training_data=background.to_numpy(dtype=float),
+        feature_names=list(feature_columns),
+        class_names=["Lower CVD risk", "Higher CVD risk"],
+        mode="classification",
+        discretize_continuous=True,
+        random_state=42,
+    )
+
+
+def _lime_explanation(model: Pipeline, row: pd.DataFrame, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    feature_columns = tuple(metadata["feature_columns"])
+    explainer = _lime_explainer(feature_columns)
+
+    def predict(data: Any) -> np.ndarray:
+        frame = pd.DataFrame(data, columns=list(feature_columns))
+        return model.predict_proba(frame)
+
+    explanation = explainer.explain_instance(
+        data_row=row.iloc[0].to_numpy(dtype=float),
+        predict_fn=predict,
+        num_features=len(feature_columns),
+        labels=(1,),
+    )
+    values_by_index = dict(explanation.local_exp.get(1, []))
+    values = np.asarray([float(values_by_index.get(index, 0.0)) for index in range(len(feature_columns))])
+    return _top_factors(list(feature_columns), row.iloc[0], values)
+
+
+def _consistency_note(primary_factors: list[dict[str, Any]], lime_factors: list[dict[str, Any]]) -> str:
+    primary_names = {factor["feature"] for factor in primary_factors[:3]}
+    lime_names = {factor["feature"] for factor in lime_factors[:3]}
+    overlap = primary_names.intersection(lime_names)
+    if overlap:
+        labels = [FEATURE_LABELS.get(feature, feature) for feature in sorted(overlap)]
+        return f"SHAP and LIME both highlighted {', '.join(labels)} among the main drivers."
+    return "SHAP and LIME highlighted different drivers, so this explanation should be treated as an estimate."
+
+
 def _top_factors(feature_columns: list[str], row: pd.Series, values: np.ndarray) -> list[dict[str, Any]]:
     pairs = sorted(zip(feature_columns, values, strict=False), key=lambda item: abs(float(item[1])), reverse=True)[:5]
     total = sum(abs(float(value)) for _, value in pairs) or 1.0
@@ -303,12 +369,14 @@ def _top_factors(feature_columns: list[str], row: pd.Series, values: np.ndarray)
     for feature, value in pairs:
         direction = "increased_risk" if float(value) >= 0 else "decreased_risk"
         label = FEATURE_LABELS.get(feature, feature)
+        importance = round(abs(float(value)) / total, 4)
         factors.append(
             {
                 "feature": feature,
                 "user_friendly_label": label,
                 "direction": direction,
-                "importance": round(abs(float(value)) / total, 4),
+                "importance": importance,
+                "importance_percentage": round(importance * 100, 1),
                 "plain_language": _plain_language(label, direction),
                 "input_value": round(float(row[feature]), 2),
             }
@@ -317,9 +385,52 @@ def _top_factors(feature_columns: list[str], row: pd.Series, values: np.ndarray)
 
 
 def _plain_language(label: str, direction: str) -> str:
-    if direction == "increased_risk":
-        return f"{label} increased your estimated risk in this prediction."
-    return f"{label} lowered your estimated risk in this prediction."
+    templates = {
+        "Systolic blood pressure": {
+            "increased_risk": "Your blood pressure reading may be higher than ideal and could add strain to your heart and blood vessels.",
+            "decreased_risk": "Your blood pressure reading is within a healthier range, which is a positive sign for heart health.",
+        },
+        "Diastolic blood pressure": {
+            "increased_risk": "Your lower blood pressure number may be worth watching because it can affect heart strain.",
+            "decreased_risk": "Your lower blood pressure number is within a healthier range for this assessment.",
+        },
+        "Cholesterol level": {
+            "increased_risk": "Your cholesterol category may need attention because cholesterol can affect blood vessels over time.",
+            "decreased_risk": "Your cholesterol category looks healthier, which may be helping your heart health.",
+        },
+        "Blood sugar level": {
+            "increased_risk": "Your blood sugar category may be worth monitoring because it can affect blood vessels over time.",
+            "decreased_risk": "Your blood sugar category is within a healthier range for this assessment.",
+        },
+        "Physical activity": {
+            "increased_risk": "Low physical activity may make it harder to protect your heart health.",
+            "decreased_risk": "Being physically active may be helping protect your heart health.",
+        },
+        "Smoking status": {
+            "increased_risk": "Smoking can put extra stress on your heart and blood vessels.",
+            "decreased_risk": "Not smoking may be helping protect your heart health.",
+        },
+        "Weight category / BMI": {
+            "increased_risk": "Your weight range may be affecting blood pressure, blood sugar, and heart health.",
+            "decreased_risk": "Your weight range is less likely to be adding strain in this assessment.",
+        },
+        "Age": {
+            "increased_risk": "Age can affect cardiovascular risk, so regular monitoring becomes more important over time.",
+            "decreased_risk": "Your age group is associated with lower risk than older age groups in this dataset.",
+        },
+        "Sex": {
+            "increased_risk": "Sex is one background factor the model considers, but it is not something you can change.",
+            "decreased_risk": "Sex is one background factor the model considers for this estimate.",
+        },
+        "Alcohol intake": {
+            "increased_risk": "Alcohol intake may affect blood pressure and overall heart health for some people.",
+            "decreased_risk": "Your alcohol intake is less likely to be adding heart-health risk in this assessment.",
+        },
+    }
+    return templates.get(label, {}).get(
+        direction,
+        f"{label} may be {'worth watching' if direction == 'increased_risk' else 'helping your heart health'} for this estimate.",
+    )
 
 
 def comparison_table(metadata: dict[str, Any] | None = None) -> str:
