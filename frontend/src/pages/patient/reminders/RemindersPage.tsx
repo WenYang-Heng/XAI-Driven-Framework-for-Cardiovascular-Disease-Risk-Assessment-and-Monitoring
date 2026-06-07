@@ -1,24 +1,25 @@
 import { useMemo, useState } from "react";
 import {
-  ArrowLeft,
   Bell,
   CalendarClock,
   CheckCircle2,
   Clock3,
   Edit3,
-  Link2,
   Plus,
   Repeat,
   Trash2,
+  X,
 } from "lucide-react";
 import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader } from "../../../components/ui/Card";
 import {
-  completeReminder,
   createReminder,
   deleteReminder,
+  updateReminder,
   type ReminderRecord,
+  type ReminderCustomMode,
+  type ReminderCustomUnit,
   type ReminderRepeat,
 } from "./reminderApi";
 
@@ -30,29 +31,39 @@ type RemindersPageProps = {
   onRefresh: () => Promise<void>;
 };
 
-const reminderTemplates = [
-  "Take a blood pressure reading",
-  "Go for a planned walk",
-  "Review weekly goal progress",
+const daysOfWeek = [
+  { value: "monday", label: "Monday" },
+  { value: "tuesday", label: "Tuesday" },
+  { value: "wednesday", label: "Wednesday" },
+  { value: "thursday", label: "Thursday" },
+  { value: "friday", label: "Friday" },
+  { value: "saturday", label: "Saturday" },
+  { value: "sunday", label: "Sunday" },
+] as const;
+
+const repeatOptions: { value: ReminderRepeat; label: string }[] = [
+  { value: "once", label: "Once" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "custom", label: "Custom" },
+  ...daysOfWeek,
 ];
 
 export function RemindersPage({ userId, reminders, onRefresh }: RemindersPageProps) {
-  const [view, setView] = useState<"overview" | "create">("overview");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingReminder, setEditingReminder] = useState<ReminderRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const metrics = useMemo(() => reminderMetrics(reminders), [reminders]);
 
-  async function handleComplete(reminderId: string) {
-    if (!userId) {
-      setError("Sign in before updating reminders.");
-      return;
-    }
-    try {
-      await completeReminder(reminderId, userId);
-      await onRefresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to update reminder.");
-    }
+  function openCreateReminder() {
+    setEditingReminder(null);
+    setIsCreateOpen(true);
+  }
+
+  function openEditReminder(reminder: ReminderRecord) {
+    setEditingReminder(reminder);
+    setIsCreateOpen(true);
   }
 
   async function handleDelete(reminderId: string) {
@@ -68,35 +79,12 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
     }
   }
 
-  if (view === "create") {
-    return (
-      <CreateReminderPage
-        userId={userId}
-        onCreated={async () => {
-          await onRefresh();
-          setView("overview");
-        }}
-        onBack={() => setView("overview")}
-      />
-    );
-  }
-
   return (
     <section className="grid gap-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl">
-          <p className="text-sm font-semibold text-cyan-700">Reminder management</p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-            Plan health reminders
-          </h2>
-          <p className="mt-4 text-base leading-7 text-slate-600">
-            Link reminders to goals and action plans so important health tasks are easy to remember and simple to manage.
-          </p>
+          <h2 className="text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">Reminders</h2>
         </div>
-        <Button onClick={() => setView("create")}>
-          <Plus className="h-4 w-4" />
-          New reminder
-        </Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -105,18 +93,14 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
         <ReminderMetric icon={Repeat} label="Repeating" value={metrics.repeating.toString()} tone="amber" />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.25fr_0.8fr]">
+      <div>
         <Card className="p-6">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <CardHeader title="Upcoming reminders" subtitle="Edit, complete, or delete scheduled health actions." />
-            <div className="flex rounded-2xl border border-slate-200 bg-slate-50 p-1">
-              <button className="rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-950 shadow-sm">
-                List
-              </button>
-              <button className="rounded-xl px-3 py-2 text-sm font-semibold text-slate-500">
-                Calendar
-              </button>
-            </div>
+            <Button onClick={() => openCreateReminder()}>
+              <Plus className="h-4 w-4" />
+              New reminder
+            </Button>
           </div>
 
           {error ? (
@@ -131,8 +115,8 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
                 <ReminderCard
                   key={reminder.reminder_id}
                   reminder={reminder}
-                  onComplete={() => handleComplete(reminder.reminder_id)}
                   onDelete={() => handleDelete(reminder.reminder_id)}
+                  onEdit={() => openEditReminder(reminder)}
                 />
               ))
             ) : (
@@ -145,47 +129,83 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
             )}
           </div>
         </Card>
-
-        <div className="grid gap-6">
-          <Card className="p-6">
-            <CardHeader title="Quick templates" subtitle="Create common reminders faster." />
-            <div className="mt-5 grid gap-3">
-              {reminderTemplates.map((template) => (
-                <button
-                  key={template}
-                  onClick={() => setView("create")}
-                  className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-cyan-200 hover:bg-cyan-50"
-                >
-                  <span>{template}</span>
-                  <Plus className="h-4 w-4 text-cyan-700" />
-                </button>
-              ))}
-            </div>
-          </Card>
-        </div>
       </div>
+
+      {isCreateOpen ? (
+        <CreateReminderModal
+          key={editingReminder?.reminder_id ?? "blank"}
+          userId={userId}
+          reminder={editingReminder}
+          onCreated={async () => {
+            await onRefresh();
+            setIsCreateOpen(false);
+            setEditingReminder(null);
+          }}
+          onClose={() => {
+            setIsCreateOpen(false);
+            setEditingReminder(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
 
-function CreateReminderPage({
+function CreateReminderModal({
   userId,
+  reminder,
   onCreated,
-  onBack,
+  onClose,
 }: {
   userId?: string;
+  reminder?: ReminderRecord | null;
   onCreated: () => Promise<void>;
-  onBack: () => void;
+  onClose: () => void;
 }) {
-  const [title, setTitle] = useState("");
-  const [linkedItem, setLinkedItem] = useState("Action plan");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [time, setTime] = useState("09:00");
-  const [repeat, setRepeat] = useState<ReminderRepeat>("none");
+  const initialDateTime = reminder ? new Date(reminder.reminder_time) : getMinimumReminderDateTime();
+  const normalizedInitial = normalizeReminderDateTime(initialDateTime);
+  const [title, setTitle] = useState(reminder?.title ?? "");
+  const [date, setDate] = useState(() => formatDateInput(normalizedInitial));
+  const [time, setTime] = useState(() => formatTimeInput(normalizedInitial));
+  const [repeat, setRepeat] = useState<ReminderRepeat>(reminder?.repeat_interval ?? "once");
+  const [customMode, setCustomMode] = useState<ReminderCustomMode>(reminder?.custom_mode ?? "interval");
+  const [customInterval, setCustomInterval] = useState(() => String(reminder?.custom_interval ?? 1));
+  const [customUnit, setCustomUnit] = useState<ReminderCustomUnit>(reminder?.custom_unit ?? "days");
+  const [selectedDays, setSelectedDays] = useState<ReminderRepeat[]>(reminder?.selected_days ?? []);
+  const [isDaysOpen, setIsDaysOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const minimumDateTime = getMinimumReminderDateTime();
 
-  async function handleCreate() {
+  function handleRepeatChange(value: ReminderRepeat) {
+    setRepeat(value);
+    if (value !== "custom") {
+      setCustomMode("interval");
+      setCustomInterval("1");
+      setCustomUnit("days");
+      setSelectedDays([]);
+      setIsDaysOpen(false);
+    }
+  }
+
+  function handleCustomModeChange(value: ReminderCustomMode) {
+    setCustomMode(value);
+    if (value === "interval") {
+      setSelectedDays([]);
+      setIsDaysOpen(false);
+    } else {
+      setCustomInterval("1");
+      setCustomUnit("days");
+    }
+  }
+
+  function handleDateTimeChange(nextDate: string, nextTime: string) {
+    const normalized = normalizeReminderDateTime(new Date(`${nextDate}T${nextTime}`));
+    setDate(formatDateInput(normalized));
+    setTime(formatTimeInput(normalized));
+  }
+
+  async function handleSave() {
     if (!userId) {
       setError("Sign in before creating reminders.");
       return;
@@ -194,47 +214,69 @@ function CreateReminderPage({
       setError("Enter a reminder title.");
       return;
     }
+    const selectedDateTime = normalizeReminderDateTime(new Date(`${date}T${time}`));
+    if (`${date}T${time}` !== `${formatDateInput(selectedDateTime)}T${formatTimeInput(selectedDateTime)}`) {
+      setDate(formatDateInput(selectedDateTime));
+      setTime(formatTimeInput(selectedDateTime));
+    }
+    const normalizedRepeat = normalizeReminderPayload({
+      repeat,
+      customMode,
+      customInterval,
+      customUnit,
+      selectedDays,
+    });
+    if ("error" in normalizedRepeat) {
+      setError(normalizedRepeat.error);
+      return;
+    }
 
     setIsSaving(true);
     setError(null);
     try {
-      await createReminder({
+      const payload = {
         user_id: userId,
         title: title.trim(),
-        description: linkedItem ? `Linked to ${linkedItem}` : undefined,
-        reminder_time: new Date(`${date}T${time}`).toISOString(),
-        linked_item: linkedItem,
-        repeat_interval: repeat,
-      });
+        reminder_time: selectedDateTime.toISOString(),
+        ...normalizedRepeat.payload,
+      };
+      if (reminder) {
+        await updateReminder(reminder.reminder_id, userId, payload);
+      } else {
+        await createReminder(payload);
+      }
       await onCreated();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to create reminder.");
+      setError(caught instanceof Error ? caught.message : "Unable to save reminder.");
     } finally {
       setIsSaving(false);
     }
   }
 
   return (
-    <section className="grid gap-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-3xl">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 px-4 py-8 backdrop-blur-sm">
+      <div className="relative max-h-[calc(100vh-4rem)] w-full max-w-lg overflow-y-auto rounded-[28px] bg-white p-6 shadow-2xl md:p-8">
+        <button
+          type="button"
+          aria-label="Close reminder form"
+          title="Close reminder form"
+          onClick={onClose}
+          className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full border border-emerald-100 bg-white text-emerald-600 transition hover:bg-emerald-50"
+        >
+          <X className="h-5 w-5" />
+        </button>
+
+        <div className="pr-10 text-center">
           <p className="text-sm font-semibold text-cyan-700">Reminder management</p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-            Create a health reminder
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">
+            {reminder ? "Edit health reminder" : "Create a health reminder"}
           </h2>
-          <p className="mt-4 text-base leading-7 text-slate-600">
-            Schedule a reminder and connect it to a goal or action plan so the next step is easier to follow.
+          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-500">
+            Schedule one practical action and receive an email when it is due.
           </p>
         </div>
-        <Button variant="secondary" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
-          Back to reminders
-        </Button>
-      </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.8fr]">
-        <Card className="grid content-start gap-4 p-6">
-          <CardHeader title="Reminder details" subtitle="Connect it to a goal or action." />
+        <div className="mt-7 grid gap-4">
           <FormLabel label="Reminder title">
             <input
               className="form-input"
@@ -243,57 +285,135 @@ function CreateReminderPage({
               onChange={(event) => setTitle(event.target.value)}
             />
           </FormLabel>
-          <FormLabel label="Related goal">
-            <select className="form-input" value={linkedItem} onChange={(event) => setLinkedItem(event.target.value)}>
-              <option>Action plan</option>
-              <option>Walking goal</option>
-              <option>Lower-salt meal</option>
-              <option>Blood pressure check</option>
-              <option>Weekly review</option>
-            </select>
-          </FormLabel>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormLabel label="Date">
-              <input className="form-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+              <input
+                className="form-input"
+                type="date"
+                min={formatDateInput(minimumDateTime)}
+                value={date}
+                onChange={(event) => handleDateTimeChange(event.target.value, time)}
+              />
             </FormLabel>
             <FormLabel label="Time">
-              <input className="form-input" type="time" value={time} onChange={(event) => setTime(event.target.value)} />
+              <input
+                className="form-input"
+                type="time"
+                value={time}
+                onChange={(event) => handleDateTimeChange(date, event.target.value)}
+              />
             </FormLabel>
           </div>
-          <FormLabel label="Repeat">
-            <select className="form-input" value={repeat} onChange={(event) => setRepeat(event.target.value as ReminderRepeat)}>
-              <option value="none">Once</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="twice_weekly">Twice weekly</option>
-            </select>
-          </FormLabel>
+          {!isReminderDateTimeValid(new Date(`${date}T${time}`)) ? (
+            <p className="text-sm font-medium text-red-600">
+              Reminder time must be later than the current time.
+            </p>
+          ) : null}
+          <div>
+            <span className="text-sm font-semibold text-slate-700">Repeat</span>
+            <p className="mt-1 text-sm text-slate-500">Set a schedule for this reminder</p>
+            <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+              <select
+                className="form-input"
+                value={repeat}
+                onChange={(event) => handleRepeatChange(event.target.value as ReminderRepeat)}
+              >
+                {repeatOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              {repeat === "custom" ? (
+                <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={customMode === "selected_days"}
+                    onClick={() => handleCustomModeChange(customMode === "selected_days" ? "interval" : "selected_days")}
+                    className={`flex h-7 w-12 items-center rounded-full p-1 transition ${
+                      customMode === "selected_days" ? "bg-cyan-600" : "bg-slate-200"
+                    }`}
+                  >
+                    <span
+                      className={`h-5 w-5 rounded-full bg-white shadow-sm transition ${
+                        customMode === "selected_days" ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                  Custom days
+                </label>
+              ) : null}
+            </div>
+          </div>
+          {repeat === "custom" ? (
+            <div className="grid gap-4">
+              {customMode === "interval" ? (
+                <div className="grid gap-4 sm:grid-cols-[1fr_1.2fr]">
+                  <FormLabel label="Every">
+                    <input
+                      className="form-input"
+                      type="number"
+                      min={1}
+                      value={customInterval}
+                      onChange={(event) => setCustomInterval(event.target.value)}
+                    />
+                  </FormLabel>
+                  <label className="flex items-end">
+                    <select className="form-input" value={customUnit} onChange={(event) => setCustomUnit(event.target.value as ReminderCustomUnit)}>
+                      <option value="minutes">Minutes</option>
+                      <option value="hours">Hours</option>
+                      <option value="days">Days</option>
+                      <option value="weeks">Weeks</option>
+                    </select>
+                  </label>
+                </div>
+              ) : (
+                <div className="relative">
+                  <span className="text-sm font-semibold text-slate-700">Selected days</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDaysOpen((current) => !current)}
+                    className="mt-1 flex min-h-12 w-full flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700"
+                  >
+                    {selectedDays.length ? (
+                      selectedDays.map((day) => (
+                        <span key={day} className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
+                          {dayLabel(day)}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-slate-400">Choose days</span>
+                    )}
+                  </button>
+                  {isDaysOpen ? (
+                    <div className="absolute bottom-full z-10 mb-2 grid w-full gap-1 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                      {daysOfWeek.map((day) => (
+                        <label key={day.value} className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-slate-700 hover:bg-cyan-50">
+                          <input
+                            type="checkbox"
+                            checked={selectedDays.includes(day.value)}
+                            onChange={() => setSelectedDays((current) => toggleDay(current, day.value))}
+                          />
+                          {day.label}
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          ) : null}
           {error ? (
             <div className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm leading-6 text-red-700">
               {error}
             </div>
           ) : null}
-          <Button className="w-full" disabled={isSaving} onClick={handleCreate}>
-            {isSaving ? "Creating..." : "Create reminder"}
+          <Button className="mt-2 w-full" disabled={isSaving} onClick={handleSave}>
+            {isSaving ? "Saving..." : reminder ? "Save reminder" : "Create reminder"}
             <CheckCircle2 className="h-4 w-4" />
           </Button>
-        </Card>
-
-        <Card className="p-6">
-          <CardHeader title="Quick templates" subtitle="Use common health actions as a starting point." />
-          <div className="mt-5 grid gap-3">
-            {reminderTemplates.map((template) => (
-              <div key={template} className="rounded-2xl border border-slate-200 bg-white p-4 text-sm font-semibold text-slate-700">
-                {template}
-              </div>
-            ))}
-          </div>
-          <div className="mt-5 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
-            Link reminders to actions that are realistic and safe to repeat.
-          </div>
-        </Card>
+        </div>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -337,62 +457,76 @@ export function ReminderSummary({
 
 function ReminderCard({
   reminder,
-  onComplete,
   onDelete,
+  onEdit,
 }: {
   reminder: ReminderRecord;
-  onComplete: () => void;
   onDelete: () => void;
+  onEdit: () => void;
 }) {
   const tone = reminderTone(reminder);
   return (
     <article className="rounded-[20px] border border-slate-200 bg-white p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex gap-4">
-          <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${toneClass(tone)}`}>
-            <Bell className="h-5 w-5" />
+          <div className={`grid h-16 w-16 shrink-0 place-items-center rounded-3xl ${toneClass(tone)}`}>
+            <Bell className="h-7 w-7" />
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-bold tracking-tight text-slate-900">{reminder.title}</h3>
               <Badge tone={tone}>{reminderStatusLabel(reminder)}</Badge>
             </div>
-            <p className="mt-2 flex items-center gap-2 text-slate-600">
-              <Clock3 className="h-4 w-4 text-slate-400" />
-              {formatReminderTime(reminder.reminder_time)}
-            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <ReminderPill icon={CalendarClock} label={formatReminderDate(reminder.reminder_time)} />
+              <ReminderPill icon={Clock3} label={formatReminderTime(reminder.reminder_time)} />
+              <ReminderPill icon={Repeat} label={repeatLabel(reminder.repeat_interval)} />
+            </div>
           </div>
         </div>
         <div className="flex gap-2">
-          <IconButton label="Edit reminder">
-            <Edit3 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Complete reminder" onClick={onComplete} disabled={reminder.status === "completed"}>
-            <CheckCircle2 className="h-4 w-4" />
-          </IconButton>
-          <IconButton label="Delete reminder" onClick={onDelete}>
-            <Trash2 className="h-4 w-4" />
-          </IconButton>
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-          <span className="flex items-center gap-2 font-semibold text-slate-900">
-            <Link2 className="h-4 w-4 text-cyan-700" />
-            Linked to
-          </span>
-          <p className="mt-2">{reminder.linked_item || "General health reminder"}</p>
-        </div>
-        <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-          <span className="flex items-center gap-2 font-semibold text-slate-900">
-            <Repeat className="h-4 w-4 text-cyan-700" />
-            Repeat
-          </span>
-          <p className="mt-2">{repeatLabel(reminder.repeat_interval)}</p>
+          <ReminderActionButton tone="edit" label="Edit" onClick={onEdit} icon={Edit3} />
+          <ReminderActionButton tone="delete" label="Delete" onClick={onDelete} icon={Trash2} />
         </div>
       </div>
     </article>
+  );
+}
+
+function ReminderActionButton({
+  tone,
+  label,
+  onClick,
+  icon: Icon,
+}: {
+  tone: "edit" | "delete";
+  label: string;
+  onClick: () => void;
+  icon: typeof Bell;
+}) {
+  const toneClassName =
+    tone === "edit"
+      ? "border-blue-100 bg-blue-50 text-blue-700 hover:border-blue-200 hover:bg-blue-100"
+      : "border-red-100 bg-red-50 text-red-700 hover:border-red-200 hover:bg-red-100";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex h-11 items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition ${toneClassName}`}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
+}
+
+function ReminderPill({ icon: Icon, label }: { icon: typeof Bell; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600">
+      <Icon className="h-3.5 w-3.5 text-cyan-700" />
+      {label}
+    </span>
   );
 }
 
@@ -426,31 +560,6 @@ function toneClass(tone: ReminderTone) {
   }[tone];
 }
 
-function IconButton({
-  label,
-  children,
-  onClick,
-  disabled = false,
-}: {
-  label: string;
-  children: React.ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="grid h-10 w-10 place-items-center rounded-2xl border border-slate-200 text-slate-500 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {children}
-    </button>
-  );
-}
-
 function FormLabel({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
@@ -477,7 +586,7 @@ function reminderMetrics(reminders: ReminderRecord[]) {
       if (reminderDate >= today && reminderDate <= weekFromNow) {
         acc.thisWeek += 1;
       }
-      if (reminder.repeat_interval !== "none") {
+      if (reminder.repeat_interval !== "once") {
         acc.repeating += 1;
       }
       return acc;
@@ -511,17 +620,92 @@ function reminderStatusLabel(reminder: ReminderRecord) {
 }
 
 function repeatLabel(value: ReminderRepeat) {
+  return repeatOptions.find((option) => option.value === value)?.label ?? "Once";
+}
+
+function dayLabel(value: ReminderRepeat) {
+  return daysOfWeek.find((day) => day.value === value)?.label ?? value;
+}
+
+function toggleDay(current: ReminderRepeat[], day: ReminderRepeat) {
+  return current.includes(day) ? current.filter((item) => item !== day) : [...current, day];
+}
+
+function getMinimumReminderDateTime(now = new Date()) {
+  // Add a small buffer so a valid form does not expire while the user clicks save.
+  return new Date(now.getTime() + 60 * 1000);
+}
+
+function isReminderDateTimeValid(value: Date) {
+  return value.getTime() >= getMinimumReminderDateTime().getTime();
+}
+
+function normalizeReminderDateTime(value: Date) {
+  const minimum = getMinimumReminderDateTime();
+  return value.getTime() < minimum.getTime() ? minimum : value;
+}
+
+function formatDateInput(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function formatTimeInput(value: Date) {
+  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+}
+
+function normalizeReminderPayload({
+  repeat,
+  customMode,
+  customInterval,
+  customUnit,
+  selectedDays,
+}: {
+  repeat: ReminderRepeat;
+  customMode: ReminderCustomMode;
+  customInterval: string;
+  customUnit: ReminderCustomUnit;
+  selectedDays: ReminderRepeat[];
+}):
+  | { payload: { repeat_interval: ReminderRepeat; custom_mode?: ReminderCustomMode; custom_interval?: number; custom_unit?: ReminderCustomUnit; selected_days?: ReminderRepeat[] } }
+  | { error: string } {
+  if (repeat !== "custom") {
+    return { payload: { repeat_interval: repeat } };
+  }
+  if (customMode === "interval") {
+    const interval = Number(customInterval);
+    if (!Number.isFinite(interval) || interval <= 0) {
+      return { error: "Enter a custom interval greater than 0." };
+    }
+    return {
+      payload: {
+        repeat_interval: "custom",
+        custom_mode: "interval",
+        custom_interval: interval,
+        custom_unit: customUnit,
+        selected_days: [],
+      },
+    };
+  }
+  if (!selectedDays.length) {
+    return { error: "Choose at least one day for the custom reminder." };
+  }
   return {
-    none: "Once",
-    daily: "Daily",
-    weekly: "Weekly",
-    twice_weekly: "Twice weekly",
-  }[value];
+    payload: {
+      repeat_interval: "custom",
+      custom_mode: "selected_days",
+      selected_days: selectedDays,
+    },
+  };
+}
+
+function formatReminderDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+  }).format(new Date(value));
 }
 
 function formatReminderTime(value: string) {
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
 }
