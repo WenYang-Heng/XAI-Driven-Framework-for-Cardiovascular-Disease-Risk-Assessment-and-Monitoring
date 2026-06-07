@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AssessmentModel, AssessmentMode, BatchApiResponse, BatchApiRow, BatchPreviewResponse, DomainExpertUser, MainTab, ModelPerformance, PatientForm, PatientReferenceMode, PredictionApiResponse, PredictionResult, XaiTab } from './types';
+import type { AssessmentModel, AssessmentModelSelection, AssessmentMode, BatchApiResponse, BatchApiRow, BatchPreviewResponse, DomainExpertUser, MainTab, ModelPerformance, PatientForm, PatientReferenceMode, PredictionApiResponse, PredictionResult, XaiTab } from './types';
 import { API_BASE_URL, defaultForm, fallbackModelPerformance, modelProfiles, tabMeta } from './constants';
 import { fallbackXai, formToPredictionPayload } from './utils';
 import { Sidebar, TopHeader } from './components/Layout';
@@ -7,6 +7,7 @@ import { NewAssessment } from './components/NewAssessment';
 import { AssessmentResult, BatchAssessmentResult } from './components/Results';
 import { BatchXaiWorkspace, XaiWorkspace } from './components/Xai';
 import { AssessmentHistory } from './components/History';
+import { getValidationSummary } from './validation';
 
 export function DomainExpertDashboard({
   currentUser,
@@ -21,7 +22,7 @@ export function DomainExpertDashboard({
   const [selectedBatchRow, setSelectedBatchRow] = useState<BatchApiRow | null>(null);
   const [form, setForm] = useState<PatientForm>(defaultForm);
   const [selectedModel, setSelectedModel] =
-    useState<AssessmentModel>("Random Forest");
+    useState<AssessmentModelSelection>("");
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [batchFile, setBatchFile] = useState<File | null>(null);
   const [batchUploadId, setBatchUploadId] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export function DomainExpertDashboard({
   const [patientReferenceMode, setPatientReferenceMode] = useState<PatientReferenceMode>("csv_column");
   const [singleBatchPatientReference, setSingleBatchPatientReference] = useState(defaultForm.patientId);
   const [batchResult, setBatchResult] = useState<BatchApiResponse | null>(null);
+  const [predictionFeatureValues, setPredictionFeatureValues] = useState<Record<string, string> | null>(null);
   const [modelPerformance, setModelPerformance] = useState<ModelPerformance>(
     fallbackModelPerformance["Random Forest"],
   );
@@ -38,13 +40,21 @@ export function DomainExpertDashboard({
   const [assessmentError, setAssessmentError] = useState<string | null>(null);
 
   const current = tabMeta[activeTab];
-  const selectedModelKey = modelProfiles[selectedModel].key;
+  const selectedModelKey = selectedModel ? modelProfiles[selectedModel].key : null;
+  const selectedModelForDisplay: AssessmentModel = selectedModel || "Random Forest";
   const userId = currentUser?.id;
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function loadModelPerformance() {
+      if (!selectedModel || !selectedModelKey) {
+        setModelPerformance(fallbackModelPerformance["Random Forest"]);
+        setPerformanceError(null);
+        setIsPerformanceLoading(false);
+        return;
+      }
+
       setIsPerformanceLoading(true);
       setPerformanceError(null);
 
@@ -78,19 +88,12 @@ export function DomainExpertDashboard({
   }, [selectedModel, selectedModelKey]);
 
   const patientSummary = useMemo(
-    () => [
-      ["Patient Reference ID", form.patientId],
-      ["Age", form.age],
-      ["Sex", form.sex === "1" ? "Male" : "Female"],
-      ["Chest Pain Type", "Asymptomatic"],
-      ["Resting BP", `${form.restingBp} mmHg`],
-      ["Cholesterol", `${form.cholesterol} mg/dL`],
-      ["Max Heart Rate", form.maxHeartRate],
-      ["Exercise-Induced Angina", form.exerciseAngina === "1" ? "Yes" : "No"],
-      ["Oldpeak", form.oldpeak],
-      ["Number of Major Vessels Coloured by Fluoroscopy", form.vessels],
-      ["Thalassemia", "Normal"],
-    ],
+    () => patientSummaryFromForm(form),
+    [form],
+  );
+
+  const currentFeatureValues = useMemo(
+    () => featureValuesFromInputFeatures(formToInputFeatures(form)),
     [form],
   );
 
@@ -99,6 +102,17 @@ export function DomainExpertDashboard({
   }
 
   async function runSingleAssessment() {
+    if (!selectedModel) {
+      setAssessmentError("Select an assessment model before running the assessment.");
+      return;
+    }
+
+    const validation = getValidationSummary(form, selectedModel, "single", null, false);
+    if (validation.missingValues.length > 0 || validation.invalidValues.length > 0) {
+      setAssessmentError("Complete all required fields and fix invalid values before running the assessment.");
+      return;
+    }
+
     setIsAssessmentLoading(true);
     setAssessmentError(null);
 
@@ -121,6 +135,7 @@ export function DomainExpertDashboard({
         result_id: data.result_id,
         request_id: data.request_id,
       } as PredictionResult);
+      setPredictionFeatureValues(currentFeatureValues);
       setActiveTab("result");
     } catch (error) {
       setAssessmentError(
@@ -134,6 +149,11 @@ export function DomainExpertDashboard({
   }
 
   async function runBatchAssessment() {
+    if (!selectedModelKey) {
+      setAssessmentError("Select an assessment model before running the batch assessment.");
+      return;
+    }
+
     if (!batchFile) {
       setAssessmentError("Select a CSV or spreadsheet file before running a batch assessment.");
       return;
@@ -238,8 +258,6 @@ export function DomainExpertDashboard({
               <NewAssessment
                 form={form}
                 selectedModel={selectedModel}
-                modelPerformance={modelPerformance}
-                isPerformanceLoading={isPerformanceLoading}
                 assessmentMode={assessmentMode}
                 onAssessmentModeChange={setAssessmentMode}
                 onModelChange={setSelectedModel}
@@ -266,11 +284,13 @@ export function DomainExpertDashboard({
                 onRunBatch={runBatchAssessment}
                 onClear={() => {
                   setForm(defaultForm);
+                  setSelectedModel("");
                   setPrediction(null);
                   setBatchResult(null);
                   setBatchFile(null);
                   setBatchUploadId(null);
                   setBatchPreview(null);
+                  setPredictionFeatureValues(null);
                   setAssessmentError(null);
                 }}
               />
@@ -278,7 +298,7 @@ export function DomainExpertDashboard({
             {activeTab === "result" ? (
               assessmentMode === "batch" ? (
                 <BatchAssessmentResult
-                  selectedModel={selectedModel}
+                  selectedModel={selectedModelForDisplay}
                   batchResult={batchResult}
                   selectedRow={selectedBatchRow}
                   onSelectRow={setSelectedBatchRow}
@@ -295,7 +315,7 @@ export function DomainExpertDashboard({
                 <AssessmentResult
                   patientSummary={patientSummary}
                   prediction={prediction}
-                  selectedModel={selectedModel}
+                  selectedModel={selectedModelForDisplay}
                   modelPerformance={modelPerformance}
                   isPerformanceLoading={isPerformanceLoading}
                   performanceError={performanceError}
@@ -311,7 +331,7 @@ export function DomainExpertDashboard({
             {activeTab === "xai" ? (
               assessmentMode === "batch" ? (
                 <BatchXaiWorkspace
-                  selectedModel={selectedModel}
+                  selectedModel={selectedModelForDisplay}
                   selectedRow={selectedBatchRow}
                   batchResult={batchResult}
                   onGoToBatchUpload={() => {
@@ -324,6 +344,9 @@ export function DomainExpertDashboard({
                   activeXaiTab={activeXaiTab}
                   setActiveXaiTab={setActiveXaiTab}
                   prediction={prediction}
+                  selectedModel={selectedModelForDisplay}
+                  patientFeatureValues={predictionFeatureValues}
+                  onBackToResult={() => setActiveTab("result")}
                   onGoToNewAssessment={() => {
                     setAssessmentMode("single");
                     setActiveTab("new");
@@ -347,7 +370,16 @@ export function DomainExpertDashboard({
                     explanation: item.explanation ?? [],
                     xai: item.xai ?? fallbackXai(item.risk_score, item.explanation ?? []),
                     model_version: item.model_version ?? item.model_name,
+                    created_at: item.created_at,
                   });
+                  const savedFeatures = item.input_features ?? null;
+                  setPredictionFeatureValues(savedFeatures ? featureValuesFromInputFeatures(savedFeatures) : null);
+                  if (savedFeatures) {
+                    setForm(formFromInputFeatures(savedFeatures, item.patient_reference_id ?? ""));
+                  } else {
+                    setForm({ ...defaultForm, patientId: item.patient_reference_id ?? "" });
+                  }
+                  setSelectedModel(modelSelectionFromKey(item.model_name));
                   setAssessmentMode("single");
                   setActiveTab("result");
                 }}
@@ -358,4 +390,112 @@ export function DomainExpertDashboard({
       </div>
     </main>
   );
+}
+
+function formToInputFeatures(form: PatientForm): Record<string, string> {
+  return {
+    age: form.age,
+    sex: form.sex,
+    cp: form.chestPain,
+    trestbps: form.restingBp,
+    chol: form.cholesterol,
+    fbs: form.fastingBloodSugar,
+    restecg: form.restingEcg,
+    thalach: form.maxHeartRate,
+    exang: form.exerciseAngina,
+    oldpeak: form.oldpeak,
+    slope: form.slope,
+    ca: form.vessels,
+    thal: form.thalassemia,
+  };
+}
+
+function formFromInputFeatures(features: Record<string, number | string | null>, patientReferenceId: string): PatientForm {
+  return {
+    patientId: patientReferenceId,
+    age: valueString(features.age),
+    sex: valueString(features.sex),
+    chestPain: valueString(features.cp),
+    restingBp: valueString(features.trestbps),
+    cholesterol: valueString(features.chol),
+    fastingBloodSugar: valueString(features.fbs),
+    restingEcg: valueString(features.restecg),
+    maxHeartRate: valueString(features.thalach),
+    exerciseAngina: valueString(features.exang),
+    oldpeak: valueString(features.oldpeak),
+    slope: valueString(features.slope),
+    vessels: valueString(features.ca),
+    thalassemia: valueString(features.thal),
+  };
+}
+
+function patientSummaryFromForm(form: PatientForm): string[][] {
+  return patientSummaryFromInputFeatures(formToInputFeatures(form), form.patientId);
+}
+
+function patientSummaryFromInputFeatures(features: Record<string, number | string | null>, patientReferenceId?: string | null): string[][] {
+  const values = featureValuesFromInputFeatures(features);
+  return [
+    ["Patient Reference ID", patientReferenceId || "Auto-generated"],
+    ["Age", values.age],
+    ["Sex", values.sex],
+    ["Chest Pain Type", values.cp],
+    ["Resting BP", values.trestbps],
+    ["Cholesterol", values.chol],
+    ["Fasting Blood Sugar > 120 mg/dL", values.fbs],
+    ["Resting ECG Result", values.restecg],
+    ["Max Heart Rate", values.thalach],
+    ["Exercise-Induced Angina", values.exang],
+    ["Oldpeak", values.oldpeak],
+    ["Slope of Peak Exercise ST Segment", values.slope],
+    ["Number of Major Vessels Coloured by Fluoroscopy", values.ca],
+    ["Thalassemia", values.thal],
+  ];
+}
+
+function featureValuesFromInputFeatures(features: Record<string, number | string | null>): Record<string, string> {
+  return {
+    age: valueString(features.age),
+    sex: categoricalLabel(features.sex, { "0": "Female", "1": "Male" }),
+    cp: categoricalLabel(features.cp, {
+      "1": "Typical angina",
+      "2": "Atypical angina",
+      "3": "Non-anginal pain",
+      "4": "Asymptomatic",
+    }),
+    trestbps: withUnit(features.trestbps, "mmHg"),
+    chol: withUnit(features.chol, "mg/dL"),
+    fbs: categoricalLabel(features.fbs, { "0": "No", "1": "Yes" }),
+    restecg: categoricalLabel(features.restecg, {
+      "0": "Normal",
+      "1": "ST-T wave abnormality",
+      "2": "Left ventricular hypertrophy",
+    }),
+    thalach: valueString(features.thalach),
+    exang: categoricalLabel(features.exang, { "0": "No", "1": "Yes" }),
+    oldpeak: valueString(features.oldpeak),
+    slope: categoricalLabel(features.slope, { "1": "Upsloping", "2": "Flat", "3": "Downsloping" }),
+    ca: valueString(features.ca),
+    thal: categoricalLabel(features.thal, { "3": "Normal", "6": "Fixed defect", "7": "Reversible defect" }),
+  };
+}
+
+function categoricalLabel(value: number | string | null | undefined, labels: Record<string, string>) {
+  const key = valueString(value);
+  return labels[key] ?? (key || "Unavailable");
+}
+
+function withUnit(value: number | string | null | undefined, unit: string) {
+  const text = valueString(value);
+  return text ? `${text} ${unit}` : "Unavailable";
+}
+
+function valueString(value: number | string | null | undefined) {
+  return value === null || value === undefined || value === "" ? "" : String(value);
+}
+
+function modelSelectionFromKey(modelName: string): AssessmentModel {
+  const match = (Object.entries(modelProfiles) as Array<[AssessmentModel, { key: string }]>)
+    .find(([, profile]) => profile.key === modelName);
+  return match?.[0] ?? "Random Forest";
 }

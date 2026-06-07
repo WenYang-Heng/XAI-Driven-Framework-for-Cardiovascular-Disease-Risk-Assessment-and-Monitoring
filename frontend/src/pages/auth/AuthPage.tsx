@@ -383,7 +383,7 @@ async function authenticate({
     throw new Error("Passwords do not match.");
   }
 
-  const dbRole = role === "admin" ? "ADMIN" : role === "domain-expert" ? "DOMAIN_EXPERT" : "PATIENT";
+  const dbRole = role === "admin" ? "ADMIN" : role === "domain-expert" ? "DOMAIN_EXPERT" : "GENERAL_USER";
   if (mode === "register") {
     const authResponse = await supabase.auth.signUp({
       email,

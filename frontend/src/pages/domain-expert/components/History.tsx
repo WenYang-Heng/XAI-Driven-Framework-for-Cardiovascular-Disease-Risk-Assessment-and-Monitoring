@@ -1,11 +1,9 @@
-import { Eye, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsUpDown, Eye, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { HistoryItem } from '../types';
 import { API_BASE_URL } from '../constants';
-import { riskLabel } from '../utils';
-import { Badge } from '../../../components/ui/Badge';
 import { Card } from '../../../components/ui/Card';
-import { FilterSelect, IconButton, RiskBadge } from './Shared';
+import { FilterSelect, IconButton } from './Shared';
 
 export function AssessmentHistory({
   userId,
@@ -17,7 +15,7 @@ export function AssessmentHistory({
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [query, setQuery] = useState("");
   const [riskFilter, setRiskFilter] = useState("All");
-  const [sortKey, setSortKey] = useState<"assessment_date" | "risk_score" | "risk_level" | "model_version">("assessment_date");
+  const [sortKey, setSortKey] = useState<"assessment_date" | "risk_score" | "risk_level">("assessment_date");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [error, setError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<HistoryItem | null>(null);
@@ -58,7 +56,7 @@ export function AssessmentHistory({
     .filter((item) => {
       const needle = query.toLowerCase();
       const matchesRisk = riskFilter === "All" || item.risk_level.toLowerCase() === riskFilter.toLowerCase();
-      return matchesRisk && [item.patient_reference_id, item.request_id, item.result_id, item.model_name, item.model_version, item.risk_level]
+      return matchesRisk && [item.patient_reference_id, item.request_id, item.result_id, item.model_name, item.risk_level]
         .join(" ")
         .toLowerCase()
         .includes(needle);
@@ -117,25 +115,40 @@ export function AssessmentHistory({
 
       <div className="mt-6 overflow-hidden rounded-[20px] border border-slate-200">
         <table className="w-full min-w-[900px] border-collapse bg-white text-left text-sm">
-          <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+          <thead className="bg-slate-50 text-sm text-slate-600">
             <tr>
               <th className="px-5 py-4 font-bold">Patient Reference</th>
               <th className="px-5 py-4 font-bold">
-                <button className="font-bold" onClick={() => changeSort("assessment_date")}>Date</button>
+                <SortHeader
+                  label="Assessment Date"
+                  sortKeyName="assessment_date"
+                  activeSortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={changeSort}
+                />
               </th>
               <th className="px-5 py-4 font-bold">Model</th>
               <th className="px-5 py-4 font-bold">
-                <button className="font-bold" onClick={() => changeSort("model_version")}>Version</button>
+                <SortHeader
+                  label="Risk Score"
+                  sortKeyName="risk_score"
+                  activeSortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={changeSort}
+                />
               </th>
               <th className="px-5 py-4 font-bold">
-                <button className="font-bold" onClick={() => changeSort("risk_score")}>Risk Score</button>
+                <SortHeader
+                  label="Risk Category"
+                  sortKeyName="risk_level"
+                  activeSortKey={sortKey}
+                  sortDirection={sortDirection}
+                  onSort={changeSort}
+                />
               </th>
-              <th className="px-5 py-4 font-bold">
-                <button className="font-bold" onClick={() => changeSort("risk_level")}>Risk Category</button>
-              </th>
-              <th className="px-5 py-4 font-bold">Feedback</th>
+              <th className="px-5 py-4 font-bold">Feedback Status</th>
               <th className="px-5 py-4 font-bold">Entry Type</th>
-              <th className="px-5 py-4 font-bold">Action</th>
+              <th className="px-5 py-4 font-bold">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -146,20 +159,17 @@ export function AssessmentHistory({
                   {formatDate(row.assessment_date ?? row.created_at)}
                 </td>
                 <td className="px-5 py-4 text-slate-600">{row.model_name}</td>
-                <td className="px-5 py-4 text-slate-600">{row.model_version ?? "-"}</td>
                 <td className="px-5 py-4 font-semibold text-slate-950">
                   {Math.round(row.risk_score * 100)}%
                 </td>
-                <td className="px-5 py-4">
-                  <RiskBadge category={riskLabel(row.risk_level)} />
+                <td className="px-5 py-4 text-slate-600">
+                  {formatCategory(row.risk_level)}
                 </td>
-                <td className="px-5 py-4">
-                  <Badge tone={row.feedback_status === "reviewed" ? "green" : "amber"}>
-                    {row.feedback_status === "reviewed" ? "Reviewed" : "Pending"}
-                  </Badge>
+                <td className="px-5 py-4 text-slate-600">
+                  {formatCategory(row.feedback_status ?? "pending")}
                 </td>
-                <td className="px-5 py-4">
-                  <Badge tone="cyan">{row.entry_type ?? "single"}</Badge>
+                <td className="px-5 py-4 text-slate-600">
+                  {formatCategory(row.entry_type ?? "single")}
                 </td>
                 <td className="px-5 py-4">
                   <div className="flex items-center gap-2">
@@ -213,6 +223,37 @@ export function AssessmentHistory({
   );
 }
 
+function SortHeader({
+  label,
+  sortKeyName,
+  activeSortKey,
+  sortDirection,
+  onSort,
+}: {
+  label: string;
+  sortKeyName: "assessment_date" | "risk_score" | "risk_level";
+  activeSortKey: "assessment_date" | "risk_score" | "risk_level";
+  sortDirection: "asc" | "desc";
+  onSort: (key: "assessment_date" | "risk_score" | "risk_level") => void;
+}) {
+  const isActive = activeSortKey === sortKeyName;
+  const Icon = isActive ? (sortDirection === "asc" ? ArrowUp : ArrowDown) : ChevronsUpDown;
+
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center gap-1.5 font-bold transition ${
+        isActive ? "text-slate-950" : "text-slate-600 hover:text-slate-950"
+      }`}
+      onClick={() => onSort(sortKeyName)}
+      aria-sort={isActive ? (sortDirection === "asc" ? "ascending" : "descending") : "none"}
+    >
+      {label}
+      <Icon className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
 function formatDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -223,4 +264,12 @@ function formatDate(value: string) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const year = date.getFullYear();
   return `${day}/${month}/${year}`;
+}
+
+function formatCategory(value: string) {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(" ");
 }

@@ -23,6 +23,7 @@ _activity_logs: list[dict[str, Any]] = []
 _patient_cases: list[dict[str, Any]] = []
 _feedback: list[dict[str, Any]] = []
 _xai_explanations: list[dict[str, Any]] = []
+_model_metric_snapshots: list[dict[str, Any]] = []
 _upload_files: dict[str, dict[str, Any]] = {}
 _profiles: list[dict[str, Any]] = []
 
@@ -201,6 +202,46 @@ def _model_id(model_name: str) -> str | None:
         return rows[0]["model_id"] if rows else None
 
     return None
+
+
+def _model_version(model_name: str) -> str | None:
+    if database_enabled():
+        rows = _query_database(
+            "select model_version from public.ml_models where model_name = %(model_name)s limit 1",
+            {"model_name": model_name},
+        )
+        return rows[0]["model_version"] if rows else None
+
+    return None
+
+
+async def save_model_metric_snapshot(metrics: dict[str, Any]) -> dict[str, Any]:
+    model_name = metrics["model_name"]
+    confusion = metrics["confusion_matrix"]
+    payload = {
+        "metric_id": str(uuid4()),
+        "model_id": _model_id(model_name),
+        "model_name": model_name,
+        "model_version": _model_version(model_name),
+        "dataset_name": "UCI Heart Disease",
+        "accuracy": metrics["accuracy"],
+        "precision": metrics["precision"],
+        "sensitivity_recall": metrics["sensitivity_recall"],
+        "specificity": metrics["specificity"],
+        "f1_score": metrics["f1_score"],
+        "auc_roc": metrics["auc_roc"],
+        "true_negative": confusion["true_negative"],
+        "false_positive": confusion["false_positive"],
+        "false_negative": confusion["false_negative"],
+        "true_positive": confusion["true_positive"],
+        "calibration_metrics": metrics.get("calibration_metrics"),
+        "decision_curve_data": metrics.get("decision_curve_data"),
+        "roc_curve_data": metrics.get("roc_curve_data"),
+        "created_at": _now(),
+    }
+
+    _model_metric_snapshots.append(payload)
+    return await _insert("model_metric_snapshots", payload)
 
 
 async def upsert_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
@@ -479,7 +520,7 @@ async def ensure_user_profile(user_id: str | None) -> None:
     }
     payload = {
         "user_id": user_id,
-        "full_name": "Clinician User",
+        "full_name": "Domain Expert User",
         "email": f"{user_id}@local.cardioxai",
         "role": "DOMAIN_EXPERT",
         "updated_at": _now(),
@@ -498,7 +539,7 @@ def _ensure_user_profile_database(user_id: str) -> None:
     """
     payload = {
         "user_id": user_id,
-        "full_name": "Clinician User",
+        "full_name": "Domain Expert User",
         "email": f"{user_id}@local.cardioxai",
         "role": "DOMAIN_EXPERT",
         "updated_at": _now(),
@@ -667,6 +708,7 @@ def prediction_history(user_id: str) -> list[dict[str, Any]]:
               pr.risk_level,
               pr.explanation,
               pr.xai,
+              req.input_features,
               pr.created_at,
               case when def.feedback_id is null then 'pending' else 'reviewed' end as feedback_status
             from public.prediction_results pr
@@ -712,6 +754,7 @@ def prediction_history(user_id: str) -> list[dict[str, Any]]:
                 "risk_level": result["risk_level"],
                 "explanation": result.get("explanation", []),
                 "xai": result.get("xai"),
+                "input_features": next((request.get("input_features") for request in _requests if request["request_id"] == result["request_id"]), None),
                 "created_at": result["created_at"],
                 "feedback_status": "reviewed" if any(item["result_id"] == result["result_id"] for item in _feedback) else "pending",
             }

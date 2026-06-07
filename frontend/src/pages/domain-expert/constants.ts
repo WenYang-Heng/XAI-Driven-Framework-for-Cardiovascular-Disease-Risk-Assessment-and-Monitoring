@@ -9,19 +9,19 @@ import type {
 
 export const defaultForm: PatientForm = {
   patientId: "",
-  age: "54",
-  sex: "1",
-  chestPain: "4",
-  restingBp: "145",
-  cholesterol: "242",
-  fastingBloodSugar: "0",
-  restingEcg: "0",
-  maxHeartRate: "150",
-  exerciseAngina: "0",
-  oldpeak: "1.4",
-  slope: "2",
-  vessels: "1",
-  thalassemia: "3",
+  age: "",
+  sex: "",
+  chestPain: "",
+  restingBp: "",
+  cholesterol: "",
+  fastingBloodSugar: "",
+  restingEcg: "",
+  maxHeartRate: "",
+  exerciseAngina: "",
+  oldpeak: "",
+  slope: "",
+  vessels: "",
+  thalassemia: "",
 };
 
 export const tabMeta: Record<
@@ -41,9 +41,9 @@ export const tabMeta: Record<
     icon: Gauge,
   },
   xai: {
-    title: "XAI Visualization Workspace",
+    title: "XAI Visualisation",
     subtitle:
-      "Explore local and global explanations for the generated risk assessment.",
+      "Understand how SHAP and LIME explain this cardiovascular risk prediction.",
     icon: BarChart3,
   },
   history: {
@@ -57,8 +57,7 @@ export const xaiTabs: { id: XaiTab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "shap", label: "SHAP" },
   { id: "lime", label: "LIME" },
-  { id: "whatif", label: "What-if" },
-  { id: "global", label: "Global Insights" },
+  { id: "comparison", label: "Comparison" },
 ];
 
 export const modelProfiles: Record<
@@ -232,38 +231,5 @@ export const fallbackModelPerformance: Record<AssessmentModel, ModelPerformance>
     },
   },
 };
-
-export const globalImportance = [
-  { feature: "cp", importance: 0.34 },
-  { feature: "ca", importance: 0.31 },
-  { feature: "oldpeak", importance: 0.28 },
-  { feature: "thalach", importance: 0.25 },
-  { feature: "thal", importance: 0.23 },
-  { feature: "age", importance: 0.21 },
-  { feature: "exang", importance: 0.18 },
-  { feature: "chol", importance: 0.16 },
-  { feature: "trestbps", importance: 0.14 },
-  { feature: "slope", importance: 0.12 },
-  { feature: "restecg", importance: 0.08 },
-  { feature: "sex", importance: 0.06 },
-  { feature: "fbs", importance: 0.04 },
-];
-
-export const pdpData = [
-  { cholesterol: 170, risk: 0.38 },
-  { cholesterol: 195, risk: 0.46 },
-  { cholesterol: 220, risk: 0.57 },
-  { cholesterol: 245, risk: 0.72 },
-  { cholesterol: 270, risk: 0.81 },
-  { cholesterol: 295, risk: 0.88 },
-];
-
-export const iceData = [
-  { cholesterol: 170, p1: 0.32, p2: 0.41, p3: 0.48 },
-  { cholesterol: 200, p1: 0.43, p2: 0.52, p3: 0.56 },
-  { cholesterol: 230, p1: 0.55, p2: 0.62, p3: 0.68 },
-  { cholesterol: 260, p1: 0.66, p2: 0.75, p3: 0.79 },
-  { cholesterol: 290, p1: 0.73, p2: 0.82, p3: 0.87 },
-];
 
 export const CLINICIAN_USER_ID = "00000000-0000-0000-0000-000000000001";

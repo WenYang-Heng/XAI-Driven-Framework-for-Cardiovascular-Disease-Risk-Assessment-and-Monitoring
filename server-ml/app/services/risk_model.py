@@ -1,6 +1,8 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -37,6 +39,7 @@ from app.services.dataset import FEATURE_COLUMNS, load_heart_disease_data
 
 
 MODEL_VERSION_PREFIX = "uci-heart"
+MODEL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
 
 MODEL_INFOS = [
     ModelInfo(
@@ -117,9 +120,18 @@ def get_evaluation_split() -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Se
 
 @lru_cache(maxsize=4)
 def get_model(model_name: ModelName) -> Any:
+    stored_model = _load_model_artifact(model_name)
+    if stored_model is not None:
+        return stored_model
+
+    return train_and_save_model(model_name)
+
+
+def train_and_save_model(model_name: ModelName) -> Any:
     X, y = load_heart_disease_data()
     model = _build_model(model_name)
     model.fit(X, y)
+    _save_model_artifact(model_name, model)
     return model
 
 
@@ -212,6 +224,35 @@ def _build_model(model_name: ModelName) -> Any:
             ("classifier", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)),
         ]
     )
+
+
+def _model_artifact_path(model_name: ModelName) -> Path:
+    return MODEL_ARTIFACT_DIR / f"{model_name}.pkl"
+
+
+def _load_model_artifact(model_name: ModelName) -> Any | None:
+    artifact_path = _model_artifact_path(model_name)
+    if not artifact_path.exists():
+        return None
+
+    artifact = joblib.load(artifact_path)
+    if isinstance(artifact, dict):
+        if artifact.get("feature_columns") != FEATURE_COLUMNS:
+            return None
+        return artifact["model"]
+
+    return artifact
+
+
+def _save_model_artifact(model_name: ModelName, model: Any) -> None:
+    MODEL_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    artifact = {
+        "model_name": model_name,
+        "model_version": f"{MODEL_VERSION_PREFIX}-{model_name}",
+        "feature_columns": FEATURE_COLUMNS,
+        "model": model,
+    }
+    joblib.dump(artifact, _model_artifact_path(model_name))
 
 
 def _feature_payload(request: RiskPredictionRequest) -> dict[str, float | int]:

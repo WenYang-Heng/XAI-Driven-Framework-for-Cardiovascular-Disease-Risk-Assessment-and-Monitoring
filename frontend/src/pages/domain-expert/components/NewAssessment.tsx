@@ -1,7 +1,8 @@
-import { Brain, CheckCircle2, ClipboardList, Download, FileSpreadsheet, Gauge, RotateCcw, Upload } from 'lucide-react';
-import type { AssessmentMode, AssessmentModel, BatchPreviewResponse, ModelPerformance, PatientForm, PatientReferenceMode } from '../types';
+import { AlertCircle, Brain, CheckCircle2, ClipboardList, Download, FileSpreadsheet, Gauge, RotateCcw, Upload } from 'lucide-react';
+import type { AssessmentMode, AssessmentModelSelection, BatchPreviewResponse, PatientForm, PatientReferenceMode } from '../types';
 import { assessmentModelOptions, batchTemplateCsv, csvFeatureGuide, modelProfiles } from '../constants';
-import { formatMetric, SelectField, TextField } from './Shared';
+import { SelectField, TextField } from './Shared';
+import { getValidationSummary, type FieldValidationState } from '../validation';
 import { Badge } from '../../../components/ui/Badge';
 import { Button } from '../../../components/ui/Button';
 import { Card, CardHeader } from '../../../components/ui/Card';
@@ -9,8 +10,6 @@ import { Card, CardHeader } from '../../../components/ui/Card';
 export function NewAssessment({
   form,
   selectedModel,
-  modelPerformance,
-  isPerformanceLoading,
   isAssessmentLoading,
   assessmentError,
   assessmentMode,
@@ -29,9 +28,7 @@ export function NewAssessment({
   onClear,
 }: {
   form: PatientForm;
-  selectedModel: AssessmentModel;
-  modelPerformance: ModelPerformance;
-  isPerformanceLoading: boolean;
+  selectedModel: AssessmentModelSelection;
   isAssessmentLoading: boolean;
   assessmentError: string | null;
   assessmentMode: AssessmentMode;
@@ -40,7 +37,7 @@ export function NewAssessment({
   patientReferenceMode: PatientReferenceMode;
   singleBatchPatientReference: string;
   onAssessmentModeChange: (mode: AssessmentMode) => void;
-  onModelChange: (model: AssessmentModel) => void;
+  onModelChange: (model: AssessmentModelSelection) => void;
   updateField: (field: keyof PatientForm, value: string) => void;
   onBatchFileSelected: (file: File | null) => void;
   onPatientReferenceModeChange: (mode: PatientReferenceMode) => void;
@@ -49,7 +46,21 @@ export function NewAssessment({
   onRunBatch: () => void;
   onClear: () => void;
 }) {
-  const selectedModelProfile = modelProfiles[selectedModel];
+  const validation = getValidationSummary(form, selectedModel, assessmentMode, batchFile, Boolean(batchPreview));
+  const selectedModelStatus = selectedModel ? modelProfiles[selectedModel].status : "Waiting for selection";
+  const handleSubmit = assessmentMode === "single"
+    ? () => {
+      if (validation.trainingRangeWarnings.length > 0) {
+        const shouldContinue = window.confirm(
+          "Some values are outside the model's training range. The assessment can continue, but prediction reliability may be reduced.",
+        );
+        if (!shouldContinue) {
+          return;
+        }
+      }
+      onRun();
+    }
+    : onRunBatch;
 
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
@@ -97,43 +108,10 @@ export function NewAssessment({
                 <SelectField
                   label="Assessment Model"
                   value={selectedModel}
-                  onChange={(value) => onModelChange(value as AssessmentModel)}
+                  onChange={(value) => onModelChange(value as AssessmentModelSelection)}
                   options={assessmentModelOptions.map((model) => [model, model])}
+                  placeholder="Select assessment model"
                 />
-              </div>
-            </div>
-
-            <div className="w-full rounded-[20px] border border-slate-200 bg-white p-4 shadow-sm lg:max-w-md">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-bold text-slate-950">
-                    {selectedModel}
-                  </p>
-                  <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    {selectedModelProfile.modelType}
-                  </p>
-                </div>
-                <Badge tone="cyan">
-                  AUC: {isPerformanceLoading ? "..." : formatMetric(modelPerformance.auc_roc)}
-                </Badge>
-              </div>
-              <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Last trained
-                  </p>
-                  <p className="mt-1 font-semibold text-slate-800">
-                    {selectedModelProfile.lastTrained}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Recommended use case
-                  </p>
-                  <p className="mt-1 font-medium leading-5 text-slate-700">
-                    {selectedModelProfile.recommendedUse}
-                  </p>
-                </div>
               </div>
             </div>
           </div>
@@ -145,7 +123,11 @@ export function NewAssessment({
         </section>
 
         {assessmentMode === "single" ? (
-          <SinglePatientEntry form={form} updateField={updateField} />
+          <SinglePatientEntry
+            form={form}
+            fieldStates={validation.fieldStates}
+            updateField={updateField}
+          />
         ) : (
           <BatchAssessmentEntry
             fileName={batchFile?.name ?? null}
@@ -175,8 +157,8 @@ export function NewAssessment({
               Clear Form
             </Button>
             <Button
-              disabled={isAssessmentLoading || (assessmentMode === "batch" && !batchFile)}
-              onClick={assessmentMode === "single" ? onRun : onRunBatch}
+              disabled={isAssessmentLoading || !validation.canRun}
+              onClick={handleSubmit}
             >
               {assessmentMode === "single" ? (
                 <Gauge className="h-4 w-4" />
@@ -199,27 +181,59 @@ export function NewAssessment({
         <CardHeader title="Input Validation Summary" />
         <div className="mt-5 space-y-3">
           {[
-            "Required features: 13 / 13",
-            assessmentMode === "single" ? "Missing values: 0" : `Selected file: ${batchFile?.name ?? "None"}`,
-            assessmentMode === "single" ? "Invalid range warnings: 0" : "Accepted formats: CSV",
-            `Selected model: ${selectedModel}`,
-            `Model status: ${selectedModelProfile.status}`,
-            assessmentMode === "single" || batchFile
-              ? "Status: Ready for assessment"
-              : "Status: Waiting for CSV upload",
+            {
+              label: assessmentMode === "single"
+                ? `Required features: ${validation.completedRequired} / ${validation.requiredTotal}`
+                : "Required features: validated from uploaded CSV",
+              valid: assessmentMode === "single" ? validation.missingValues.length === 0 : Boolean(batchPreview),
+            },
+            {
+              label: assessmentMode === "single"
+                ? `Missing values: ${validation.missingValues.length}`
+                : `Selected file: ${batchFile?.name ?? "None"}`,
+              valid: assessmentMode === "single" ? validation.missingValues.length === 0 : Boolean(batchFile),
+            },
+            {
+              label: assessmentMode === "single"
+                ? `Invalid values: ${validation.invalidValues.length}`
+                : "Accepted formats: CSV",
+              valid: validation.invalidValues.length === 0,
+            },
+            {
+              label: assessmentMode === "single"
+                ? `Out-of-training-range warnings: ${validation.trainingRangeWarnings.length}`
+                : "Out-of-training-range warnings: handled after CSV validation",
+              valid: validation.trainingRangeWarnings.length === 0,
+            },
+            {
+              label: `Selected model: ${selectedModel || "Not selected"}`,
+              valid: Boolean(selectedModel),
+            },
+            {
+              label: `Model status: ${selectedModelStatus}`,
+              valid: Boolean(selectedModel),
+            },
+            {
+              label: `Assessment readiness: ${validation.readinessStatus}`,
+              valid: validation.readinessStatus === "Ready for assessment" || validation.readinessStatus === "Ready with warnings",
+            },
           ].map((item) => (
             <div
-              key={item}
+              key={item.label}
               className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700"
             >
-              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              {item}
+              {item.valid ? (
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+              ) : (
+                <AlertCircle className="h-5 w-5 shrink-0 text-amber-500" />
+              )}
+              {item.label}
             </div>
           ))}
         </div>
         <div className="mt-5 rounded-[20px] border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
-          Input values will be formatted according to the same feature schema
-          used during model training.
+          Inputs follow the UCI Heart Disease feature schema. Clinical plausibility ranges are used to block unrealistic values.
+          Training ranges are based on the cleaned UCI dataset and are used to warn when inputs fall outside the model's training distribution.
         </div>
       </Card>
     </div>
@@ -270,9 +284,11 @@ export function AssessmentModeCard({
 
 export function SinglePatientEntry({
   form,
+  fieldStates,
   updateField,
 }: {
   form: PatientForm;
+  fieldStates: Partial<Record<keyof PatientForm, FieldValidationState>>;
   updateField: (field: keyof PatientForm, value: string) => void;
 }) {
   return (
@@ -282,13 +298,14 @@ export function SinglePatientEntry({
         value={form.patientId}
         onChange={(value) => updateField("patientId", value)}
         placeholder="Leave blank for new patient"
-        helperText="Ignore this field for a new patient reference ID. The system will generate the next case number automatically."
       />
       <TextField
         label="Age"
         type="number"
         value={form.age}
         onChange={(value) => updateField("age", value)}
+        validationMessage={fieldStates.age?.message}
+        validationTone={fieldStates.age?.tone}
       />
       <SelectField
         label="Sex"
@@ -298,6 +315,8 @@ export function SinglePatientEntry({
           ["0", "Female"],
           ["1", "Male"],
         ]}
+        validationMessage={fieldStates.sex?.message}
+        validationTone={fieldStates.sex?.tone}
       />
       <SelectField
         label="Chest Pain Type"
@@ -309,6 +328,8 @@ export function SinglePatientEntry({
           ["3", "Non-anginal pain"],
           ["4", "Asymptomatic"],
         ]}
+        validationMessage={fieldStates.chestPain?.message}
+        validationTone={fieldStates.chestPain?.tone}
       />
       <TextField
         label="Resting Blood Pressure"
@@ -316,6 +337,8 @@ export function SinglePatientEntry({
         type="number"
         value={form.restingBp}
         onChange={(value) => updateField("restingBp", value)}
+        validationMessage={fieldStates.restingBp?.message}
+        validationTone={fieldStates.restingBp?.tone}
       />
       <TextField
         label="Serum Cholesterol"
@@ -323,6 +346,8 @@ export function SinglePatientEntry({
         type="number"
         value={form.cholesterol}
         onChange={(value) => updateField("cholesterol", value)}
+        validationMessage={fieldStates.cholesterol?.message}
+        validationTone={fieldStates.cholesterol?.tone}
       />
       <SelectField
         label="Fasting Blood Sugar > 120 mg/dL"
@@ -332,6 +357,8 @@ export function SinglePatientEntry({
           ["0", "No"],
           ["1", "Yes"],
         ]}
+        validationMessage={fieldStates.fastingBloodSugar?.message}
+        validationTone={fieldStates.fastingBloodSugar?.tone}
       />
       <SelectField
         label="Resting ECG Result"
@@ -342,12 +369,16 @@ export function SinglePatientEntry({
           ["1", "ST-T wave abnormality"],
           ["2", "Left ventricular hypertrophy"],
         ]}
+        validationMessage={fieldStates.restingEcg?.message}
+        validationTone={fieldStates.restingEcg?.tone}
       />
       <TextField
         label="Maximum Heart Rate Achieved"
         type="number"
         value={form.maxHeartRate}
         onChange={(value) => updateField("maxHeartRate", value)}
+        validationMessage={fieldStates.maxHeartRate?.message}
+        validationTone={fieldStates.maxHeartRate?.tone}
       />
       <SelectField
         label="Exercise-Induced Angina"
@@ -357,6 +388,8 @@ export function SinglePatientEntry({
           ["0", "No"],
           ["1", "Yes"],
         ]}
+        validationMessage={fieldStates.exerciseAngina?.message}
+        validationTone={fieldStates.exerciseAngina?.tone}
       />
       <TextField
         label="ST Depression / Oldpeak"
@@ -364,6 +397,8 @@ export function SinglePatientEntry({
         step="0.1"
         value={form.oldpeak}
         onChange={(value) => updateField("oldpeak", value)}
+        validationMessage={fieldStates.oldpeak?.message}
+        validationTone={fieldStates.oldpeak?.tone}
       />
       <SelectField
         label="Slope of Peak Exercise ST Segment"
@@ -374,6 +409,8 @@ export function SinglePatientEntry({
           ["2", "Flat"],
           ["3", "Downsloping"],
         ]}
+        validationMessage={fieldStates.slope?.message}
+        validationTone={fieldStates.slope?.tone}
       />
       <SelectField
         label="Number of Major Vessels Coloured by Fluoroscopy"
@@ -385,6 +422,8 @@ export function SinglePatientEntry({
           ["2", "2"],
           ["3", "3"],
         ]}
+        validationMessage={fieldStates.vessels?.message}
+        validationTone={fieldStates.vessels?.tone}
       />
       <SelectField
         label="Thalassemia Result"
@@ -395,6 +434,8 @@ export function SinglePatientEntry({
           ["6", "Fixed defect"],
           ["7", "Reversible defect"],
         ]}
+        validationMessage={fieldStates.thalassemia?.message}
+        validationTone={fieldStates.thalassemia?.tone}
       />
     </div>
   );

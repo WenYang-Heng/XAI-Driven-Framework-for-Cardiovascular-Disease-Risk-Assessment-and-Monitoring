@@ -69,7 +69,7 @@ class UserProfileRequest(BaseModel):
     user_id: str
     full_name: str | None = None
     email: str | None = None
-    role: Literal["ADMIN", "DOMAIN_EXPERT", "PATIENT"] = "DOMAIN_EXPERT"
+    role: Literal["ADMIN", "DOMAIN_EXPERT", "GENERAL_USER"] = "DOMAIN_EXPERT"
 
 
 class UserProfileResponse(UserProfileRequest):

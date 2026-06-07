@@ -4,7 +4,7 @@ export type MainTab =
   | "xai"
   | "history";
 
-export type XaiTab = "overview" | "shap" | "lime" | "whatif" | "global";
+export type XaiTab = "overview" | "shap" | "lime" | "comparison";
 
 export type AssessmentMode = "single" | "batch";
 export type PatientReferenceMode = "csv_column" | "auto_generate" | "single_case";
@@ -14,6 +14,8 @@ export type AssessmentModel =
   | "XGBoost"
   | "Logistic Regression"
   | "Neural Network";
+
+export type AssessmentModelSelection = AssessmentModel | "";
 
 export type ModelKey =
   | "random_forest"
@@ -66,6 +68,8 @@ export type PredictionResult = {
   explanation: string[];
   model_version: string;
   xai: XaiExplanation;
+  assessment_date?: string | null;
+  created_at?: string | null;
 };
 
 export type PredictionApiResponse = {
@@ -139,6 +143,7 @@ export type HistoryItem = {
   risk_level: string;
   explanation?: string[];
   xai?: XaiExplanation | null;
+  input_features?: Record<string, number | string | null> | null;
   created_at: string;
   feedback_status?: "pending" | "reviewed";
 };
@@ -151,7 +156,7 @@ export type DomainExpertUser = {
 } | null;
 
 export type FeedbackForm = {
-  clinicianRiskLevel: "low" | "moderate" | "high";
+  assessmentRiskLevel: "low" | "moderate" | "high";
   agreementLevel: string;
   isClinicallyAcceptable: boolean;
   confidenceLevel: string;

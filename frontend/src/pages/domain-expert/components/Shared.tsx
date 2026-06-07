@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Brain, ClipboardList, Gauge, ShieldCheck } from 'lucide-react';
 import type { AssessmentModel, ModelPerformance, PredictionResult } from '../types';
 import { riskLabel, riskTone } from '../utils';
@@ -81,6 +82,9 @@ export function TextField({
   step,
   placeholder,
   helperText,
+  validationMessage,
+  validationTone,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -89,18 +93,29 @@ export function TextField({
   unit?: string;
   step?: string;
   placeholder?: string;
-  helperText?: string;
+  helperText?: ReactNode;
+  validationMessage?: string;
+  validationTone?: "error" | "warning";
+  disabled?: boolean;
 }) {
+  const fieldTone = validationTone === "error"
+    ? "border-red-300 bg-red-50/30 focus-within:border-red-400 focus-within:ring-red-100"
+    : validationTone === "warning"
+      ? "border-amber-300 bg-amber-50/30 focus-within:border-amber-400 focus-within:ring-amber-100"
+      : "border-slate-200 bg-white focus-within:border-cyan-400 focus-within:ring-cyan-100";
+  const messageTone = validationTone === "error" ? "text-red-700" : "text-amber-700";
+
   return (
     <label className="block">
       <span className="text-sm font-semibold text-slate-700">{label}</span>
-      <div className="mt-2 flex overflow-hidden rounded-2xl border border-slate-200 bg-white focus-within:border-cyan-400 focus-within:ring-4 focus-within:ring-cyan-100">
+      <div className={`mt-2 flex overflow-hidden rounded-2xl border focus-within:ring-4 ${fieldTone}`}>
         <input
           className="min-h-12 w-full bg-transparent px-4 text-sm font-medium text-slate-900 outline-none"
           type={type}
           step={step}
           placeholder={placeholder}
           value={value}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.value)}
         />
         {unit ? (
@@ -114,6 +129,11 @@ export function TextField({
           {helperText}
         </p>
       ) : null}
+      {validationMessage ? (
+        <p className={`mt-2 text-xs font-bold leading-5 ${messageTone}`}>
+          {validationMessage}
+        </p>
+      ) : null}
     </label>
   );
 }
@@ -123,26 +143,57 @@ export function SelectField({
   value,
   onChange,
   options,
+  placeholder = "Select an option",
+  helperText,
+  validationMessage,
+  validationTone,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: [string, string][];
+  placeholder?: string;
+  helperText?: ReactNode;
+  validationMessage?: string;
+  validationTone?: "error" | "warning";
+  disabled?: boolean;
 }) {
+  const fieldTone = validationTone === "error"
+    ? "border-red-300 bg-red-50/30 focus:border-red-400 focus:ring-red-100"
+    : validationTone === "warning"
+      ? "border-amber-300 bg-amber-50/30 focus:border-amber-400 focus:ring-amber-100"
+      : "border-slate-200 bg-white focus:border-cyan-400 focus:ring-cyan-100";
+  const messageTone = validationTone === "error" ? "text-red-700" : "text-amber-700";
+
   return (
     <label className="block">
       <span className="text-sm font-semibold text-slate-700">{label}</span>
       <select
-        className="mt-2 min-h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 outline-none transition focus:border-cyan-400 focus:ring-4 focus:ring-cyan-100"
+        className={`mt-2 min-h-12 w-full rounded-2xl border px-4 text-sm font-medium text-slate-900 outline-none transition focus:ring-4 ${fieldTone}`}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
+        <option value="" disabled>
+          {placeholder}
+        </option>
         {options.map(([optionValue, labelText]) => (
           <option key={optionValue} value={optionValue}>
             {labelText}
           </option>
         ))}
       </select>
+      {helperText ? (
+        <p className="mt-2 text-xs font-medium leading-5 text-slate-500">
+          {helperText}
+        </p>
+      ) : null}
+      {validationMessage ? (
+        <p className={`mt-2 text-xs font-bold leading-5 ${messageTone}`}>
+          {validationMessage}
+        </p>
+      ) : null}
     </label>
   );
 }
@@ -200,78 +251,6 @@ export function Legend({
       </div>
       <p className="mt-1 text-xs text-slate-500">{range}</p>
     </div>
-  );
-}
-
-export function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card className="p-5">
-      <h3 className="mb-5 text-base font-semibold text-slate-950">{title}</h3>
-      {children}
-    </Card>
-  );
-}
-
-export function ScenarioCard({
-  title,
-  rows,
-  tone,
-}: {
-  title: string;
-  rows: string[][];
-  tone: "red" | "amber";
-}) {
-  return (
-    <div
-      className={`rounded-[22px] p-5 ring-1 ${
-        tone === "red"
-          ? "bg-red-50 text-red-900 ring-red-100"
-          : "bg-amber-50 text-amber-900 ring-amber-100"
-      }`}
-    >
-      <h3 className="text-base font-bold">{title}</h3>
-      <div className="mt-4 space-y-3">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex items-center justify-between gap-4 text-sm">
-            <span className="opacity-75">{label}</span>
-            <span className="font-bold">{value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function ContributorCard({
-  title,
-  rows,
-  tone,
-}: {
-  title: string;
-  rows: string[][];
-  tone: "red" | "green";
-}) {
-  return (
-    <Card className="p-6">
-      <h3 className="text-lg font-semibold text-slate-950">{title}</h3>
-      <div className="mt-5 space-y-3">
-        {rows.map(([label, value]) => (
-          <div
-            key={label}
-            className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
-          >
-            <span className="text-sm font-medium text-slate-600">{label}</span>
-            <Badge tone={tone}>{value}</Badge>
-          </div>
-        ))}
-      </div>
-    </Card>
   );
 }
 
