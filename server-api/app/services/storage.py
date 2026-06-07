@@ -1,7 +1,7 @@
 import os
 import re
 from collections import Counter
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -10,6 +10,7 @@ import httpx
 from psycopg2.extras import Json, RealDictCursor
 
 from app.services.database import database_enabled, get_connection
+from app.services.email_service import EmailNotConfiguredError, send_reminder_email
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -699,9 +700,17 @@ async def create_reminder(payload: dict[str, Any]) -> dict[str, Any]:
         "description": payload.get("description"),
         "reminder_time": payload["reminder_time"],
         "linked_item": payload.get("linked_item"),
-        "repeat_interval": payload.get("repeat_interval", "none"),
+        "repeat_interval": payload.get("repeat_interval", "once"),
+        "custom_mode": payload.get("custom_mode"),
+        "custom_interval": payload.get("custom_interval"),
+        "custom_unit": payload.get("custom_unit"),
+        "selected_days": payload.get("selected_days", []),
         "status": "scheduled",
         "completed_at": None,
+        "notified_at": None,
+        "email_enabled": payload.get("email_enabled", True),
+        "notification_channel": payload.get("notification_channel", "email"),
+        "notification_error": None,
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -723,6 +732,20 @@ async def update_reminder(reminder_id: str, user_id: str, payload: dict[str, Any
         update_payload["completed_at"] = update_payload.get("completed_at") or _now()
     elif update_payload.get("status") == "scheduled":
         update_payload["completed_at"] = None
+    reset_notification = any(
+        key in update_payload
+        for key in (
+            "reminder_time",
+            "repeat_interval",
+            "custom_mode",
+            "custom_interval",
+            "custom_unit",
+            "selected_days",
+            "email_enabled",
+            "notification_channel",
+        )
+    ) or update_payload.get("status") == "scheduled"
+    reset_custom = update_payload.get("repeat_interval") is not None and update_payload.get("repeat_interval") != "custom"
 
     if database_enabled():
         rows = _query_database(
@@ -734,8 +757,20 @@ async def update_reminder(reminder_id: str, user_id: str, payload: dict[str, Any
               reminder_time = coalesce(%(reminder_time)s, reminder_time),
               linked_item = coalesce(%(linked_item)s, linked_item),
               repeat_interval = coalesce(%(repeat_interval)s, repeat_interval),
+              custom_mode = case when %(reset_custom)s then null else coalesce(%(custom_mode)s, custom_mode) end,
+              custom_interval = case when %(reset_custom)s then null else coalesce(%(custom_interval)s, custom_interval) end,
+              custom_unit = case when %(reset_custom)s then null else coalesce(%(custom_unit)s, custom_unit) end,
+              selected_days = case when %(reset_custom)s then '[]'::jsonb else coalesce(%(selected_days)s, selected_days) end,
               status = coalesce(%(status)s, status),
-              completed_at = %(completed_at)s,
+              completed_at = case
+                when %(status)s = 'completed' then coalesce(%(completed_at)s, completed_at, %(updated_at)s)
+                when %(status)s = 'scheduled' then null
+                else completed_at
+              end,
+              email_enabled = coalesce(%(email_enabled)s, email_enabled),
+              notification_channel = coalesce(%(notification_channel)s, notification_channel),
+              notified_at = case when %(reset_notification)s then null else notified_at end,
+              notification_error = case when %(reset_notification)s then null else notification_error end,
               updated_at = %(updated_at)s
             where reminder_id = %(reminder_id)s
               and user_id = %(user_id)s
@@ -749,8 +784,16 @@ async def update_reminder(reminder_id: str, user_id: str, payload: dict[str, Any
                 "reminder_time": update_payload.get("reminder_time"),
                 "linked_item": update_payload.get("linked_item"),
                 "repeat_interval": update_payload.get("repeat_interval"),
+                "custom_mode": update_payload.get("custom_mode"),
+                "custom_interval": update_payload.get("custom_interval"),
+                "custom_unit": update_payload.get("custom_unit"),
+                "selected_days": update_payload.get("selected_days"),
+                "reset_custom": reset_custom,
                 "status": update_payload.get("status"),
                 "completed_at": update_payload.get("completed_at"),
+                "email_enabled": update_payload.get("email_enabled"),
+                "notification_channel": update_payload.get("notification_channel"),
+                "reset_notification": reset_notification,
                 "updated_at": update_payload["updated_at"],
             },
         )
@@ -759,6 +802,9 @@ async def update_reminder(reminder_id: str, user_id: str, payload: dict[str, Any
     reminder = get_reminder(reminder_id, user_id)
     if not reminder:
         return None
+    if reset_notification:
+        update_payload["notified_at"] = None
+        update_payload["notification_error"] = None
     reminder.update(update_payload)
     return reminder
 
@@ -806,6 +852,217 @@ def get_reminder(reminder_id: str, user_id: str) -> dict[str, Any] | None:
         ),
         None,
     )
+
+
+def due_email_reminders(limit: int = 25) -> list[dict[str, Any]]:
+    if database_enabled():
+        return _query_database(
+            """
+            select
+              r.*,
+              up.email as user_email,
+              up.full_name as user_full_name
+            from public.reminders r
+            left join public.user_profiles up on up.user_id = r.user_id
+            where r.status = 'scheduled'
+              and r.email_enabled = true
+              and r.notification_channel = 'email'
+              and r.notified_at is null
+              and r.notification_error is null
+              and r.reminder_time <= now()
+            order by r.reminder_time asc
+            limit %(limit)s
+            """,
+            {"limit": limit},
+        )
+
+    now = _now()
+    rows = []
+    for reminder in _reminders:
+        if len(rows) >= limit:
+            break
+        if reminder.get("status") != "scheduled":
+            continue
+        if reminder.get("email_enabled") is False or reminder.get("notification_channel") not in (None, "email"):
+            continue
+        if reminder.get("notified_at") or reminder.get("notification_error") or reminder.get("reminder_time", "") > now:
+            continue
+        profile = get_user_profile(reminder.get("user_id", "")) or {}
+        rows.append({**reminder, "user_email": profile.get("email"), "user_full_name": profile.get("full_name")})
+    return rows
+
+
+def mark_reminder_notified(reminder_id: str, error: str | None = None, next_time: str | None = None) -> None:
+    if next_time and error is None:
+        payload = {
+            "reminder_time": next_time,
+            "notified_at": None,
+            "notification_error": None,
+            "updated_at": _now(),
+        }
+    else:
+        payload = {
+            "notified_at": _now() if error is None else None,
+            "notification_error": error,
+            "updated_at": _now(),
+        }
+
+    if database_enabled():
+        _update_database("reminders", "reminder_id", reminder_id, payload)
+        return
+
+    for reminder in _reminders:
+        if reminder.get("reminder_id") == reminder_id:
+            reminder.update(payload)
+            return
+
+
+async def process_due_reminder_emails(limit: int = 25, dry_run: bool = False) -> dict[str, Any]:
+    reminders = due_email_reminders(limit)
+    results = []
+
+    for reminder in reminders:
+        reminder_id = reminder["reminder_id"]
+        user_email = reminder.get("user_email")
+        if not user_email:
+            error = "User email is missing."
+            if not dry_run:
+                mark_reminder_notified(reminder_id, error)
+            results.append({"reminder_id": reminder_id, "status": "failed", "error": error})
+            continue
+
+        subject = f"Reminder: {reminder['title']}"
+        body = _reminder_email_body(reminder)
+        if dry_run:
+            results.append({"reminder_id": reminder_id, "status": "dry_run", "to": user_email, "subject": subject})
+            continue
+
+        try:
+            email_result = await send_reminder_email(user_email, subject, body)
+        except EmailNotConfiguredError as error:
+            results.append({"reminder_id": reminder_id, "status": "skipped", "error": str(error)})
+            continue
+        except Exception as error:
+            mark_reminder_notified(reminder_id, str(error))
+            results.append({"reminder_id": reminder_id, "status": "failed", "error": str(error)})
+            continue
+
+        mark_reminder_notified(reminder_id, next_time=_next_reminder_time(reminder))
+        await log_activity(reminder.get("user_id"), "SEND_REMINDER_EMAIL", "reminders", reminder_id)
+        results.append(
+            {
+                "reminder_id": reminder_id,
+                "status": "sent",
+                "provider": email_result.provider,
+                "message_id": email_result.message_id,
+            }
+        )
+
+    return {
+        "processed": len(results),
+        "sent": sum(1 for item in results if item["status"] == "sent"),
+        "failed": sum(1 for item in results if item["status"] == "failed"),
+        "skipped": sum(1 for item in results if item["status"] == "skipped"),
+        "dry_run": dry_run,
+        "results": results,
+    }
+
+
+def _reminder_email_body(reminder: dict[str, Any]) -> str:
+    name = reminder.get("user_full_name") or "there"
+    description = reminder.get("description")
+    linked_item = reminder.get("linked_item")
+    details = []
+    if description:
+        details.append(description)
+    if linked_item:
+        details.append(f"Linked item: {linked_item}")
+
+    details_text = "\n".join(details) if details else "No extra details were added."
+    return (
+        f"Hi {name},\n\n"
+        "This is your CardioXAI reminder:\n\n"
+        f"{reminder['title']}\n\n"
+        f"Scheduled time: {reminder['reminder_time']}\n\n"
+        f"{details_text}\n\n"
+        "This reminder supports your self-management plan and does not replace medical advice or prescribed treatment."
+    )
+
+
+def _next_reminder_time(reminder: dict[str, Any]) -> str | None:
+    repeat = reminder.get("repeat_interval", "once")
+    current_time = _parse_datetime(reminder.get("reminder_time"))
+    if repeat in ("once", "none", None):
+        return None
+    if repeat == "daily":
+        return (current_time + timedelta(days=1)).isoformat()
+    if repeat == "weekly":
+        return (current_time + timedelta(days=7)).isoformat()
+    if repeat in WEEKDAY_INDEX:
+        return _next_weekday_time(current_time, WEEKDAY_INDEX[repeat]).isoformat()
+    if repeat == "custom":
+        if reminder.get("custom_mode") == "interval":
+            return _next_custom_interval_time(
+                current_time,
+                int(reminder.get("custom_interval") or 1),
+                reminder.get("custom_unit") or "days",
+            ).isoformat()
+        if reminder.get("custom_mode") == "selected_days":
+            days = reminder.get("selected_days") or []
+            if isinstance(days, str):
+                try:
+                    import json
+
+                    days = json.loads(days)
+                except Exception:
+                    days = []
+            indexes = sorted(WEEKDAY_INDEX[day] for day in days if day in WEEKDAY_INDEX)
+            if indexes:
+                return _next_selected_day_time(current_time, indexes).isoformat()
+    return None
+
+
+WEEKDAY_INDEX = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+
+
+def _parse_datetime(value: str | datetime) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    normalized = value.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _next_weekday_time(current_time: datetime, weekday_index: int) -> datetime:
+    days_ahead = (weekday_index - current_time.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return current_time + timedelta(days=days_ahead)
+
+
+def _next_selected_day_time(current_time: datetime, weekday_indexes: list[int]) -> datetime:
+    candidates = [_next_weekday_time(current_time, weekday_index) for weekday_index in weekday_indexes]
+    return min(candidates)
+
+
+def _next_custom_interval_time(current_time: datetime, interval: int, unit: str) -> datetime:
+    if unit == "minutes":
+        return current_time + timedelta(minutes=interval)
+    if unit == "hours":
+        return current_time + timedelta(hours=interval)
+    if unit == "weeks":
+        return current_time + timedelta(weeks=interval)
+    return current_time + timedelta(days=interval)
 
 
 def get_action_plan_for_assessment(assessment_id: str, user_id: str) -> dict[str, Any] | None:

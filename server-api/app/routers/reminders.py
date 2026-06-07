@@ -1,10 +1,28 @@
-from fastapi import APIRouter, HTTPException, Query
+import os
+
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.models import ReminderRequest, ReminderUpdateRequest
 from app.services import storage
 
 
 router = APIRouter(prefix="/api/reminders", tags=["reminders"])
+
+
+REMINDER_PROCESSOR_TOKEN = os.getenv("REMINDER_PROCESSOR_TOKEN", "")
+
+
+@router.post("/process-due")
+async def process_due_reminder_emails(
+    dry_run: bool = Query(False),
+    limit: int = Query(25, ge=1, le=100),
+    x_reminder_processor_token: str | None = Header(default=None),
+) -> dict:
+    if REMINDER_PROCESSOR_TOKEN and x_reminder_processor_token != REMINDER_PROCESSOR_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid reminder processor token.")
+
+    result = await storage.process_due_reminder_emails(limit=limit, dry_run=dry_run)
+    return {"success": True, **result}
 
 
 @router.get("/{user_id}")

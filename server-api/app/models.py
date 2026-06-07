@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -272,8 +273,23 @@ class PatientAssessmentResponse(BaseModel):
 
 ActionPriority = Literal["low", "medium", "high"]
 ActionDifficulty = Literal["easy", "moderate", "hard"]
-ReminderRepeat = Literal["none", "daily", "weekly", "twice_weekly"]
+ReminderRepeat = Literal[
+    "once",
+    "daily",
+    "weekly",
+    "custom",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
 ReminderStatus = Literal["scheduled", "completed"]
+ReminderNotificationChannel = Literal["email", "in_app", "none"]
+ReminderCustomMode = Literal["interval", "selected_days"]
+ReminderCustomUnit = Literal["minutes", "hours", "days", "weeks"]
 
 
 class ActionPlanGenerateRequest(BaseModel):
@@ -332,7 +348,30 @@ class ReminderRequest(BaseModel):
     description: str | None = Field(None, max_length=500)
     reminder_time: str
     linked_item: str | None = Field(None, max_length=160)
-    repeat_interval: ReminderRepeat = "none"
+    repeat_interval: ReminderRepeat = "once"
+    custom_mode: ReminderCustomMode | None = None
+    custom_interval: int | None = Field(None, gt=0)
+    custom_unit: ReminderCustomUnit | None = None
+    selected_days: list[ReminderRepeat] = Field(default_factory=list)
+    email_enabled: bool = True
+    notification_channel: ReminderNotificationChannel = "email"
+
+    @model_validator(mode="after")
+    def validate_repeat_settings(self) -> "ReminderRequest":
+        if _parse_reminder_datetime(self.reminder_time) <= datetime.now(UTC):
+            raise ValueError("reminder_time must be later than the current time")
+        if self.repeat_interval != "custom":
+            return self
+        if self.custom_mode == "interval":
+            if self.custom_interval is None or self.custom_unit is None:
+                raise ValueError("custom_interval and custom_unit are required for custom interval reminders")
+        elif self.custom_mode == "selected_days":
+            valid_days = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+            if not self.selected_days or any(day not in valid_days for day in self.selected_days):
+                raise ValueError("selected_days must include at least one weekday")
+        else:
+            raise ValueError("custom_mode is required when repeat_interval is custom")
+        return self
 
 
 class ReminderUpdateRequest(BaseModel):
@@ -341,7 +380,19 @@ class ReminderUpdateRequest(BaseModel):
     reminder_time: str | None = None
     linked_item: str | None = Field(None, max_length=160)
     repeat_interval: ReminderRepeat | None = None
+    custom_mode: ReminderCustomMode | None = None
+    custom_interval: int | None = Field(None, gt=0)
+    custom_unit: ReminderCustomUnit | None = None
+    selected_days: list[ReminderRepeat] | None = None
     status: ReminderStatus | None = None
+    email_enabled: bool | None = None
+    notification_channel: ReminderNotificationChannel | None = None
+
+    @model_validator(mode="after")
+    def validate_reminder_time(self) -> "ReminderUpdateRequest":
+        if self.reminder_time and _parse_reminder_datetime(self.reminder_time) <= datetime.now(UTC):
+            raise ValueError("reminder_time must be later than the current time")
+        return self
 
 
 class ReminderResponse(BaseModel):
@@ -363,3 +414,10 @@ PREDICTION_FEATURES = [
     "ca",
     "thal",
 ]
+
+
+def _parse_reminder_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

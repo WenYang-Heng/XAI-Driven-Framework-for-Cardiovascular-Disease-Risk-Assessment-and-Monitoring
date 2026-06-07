@@ -1,12 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import action_plans, admin, batch, chatbot, health, history, models, patient_assessments, patients, predictions, profile, reminders
-
 from dotenv import load_dotenv
 
 load_dotenv()
 
+from app.routers import action_plans, admin, batch, chatbot, health, history, models, patient_assessments, patients, predictions, profile, reminders
 
 
 app = FastAPI(
