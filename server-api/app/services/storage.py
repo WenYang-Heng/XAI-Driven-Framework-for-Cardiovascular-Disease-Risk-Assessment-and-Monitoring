@@ -638,7 +638,12 @@ async def create_upload(
             "patient_reference_mode": patient_reference_mode,
         }
     inserted = await _insert("uploaded_files", {key: value for key, value in record.items() if key != "upload_id"})
-    return inserted.get("upload_id", upload_id)
+    persisted_upload_id = inserted.get("upload_id", upload_id)
+    if persisted_upload_id != upload_id:
+        record["upload_id"] = persisted_upload_id
+        if content is not None:
+            _upload_files[persisted_upload_id] = _upload_files.pop(upload_id)
+    return persisted_upload_id
 
 
 def get_upload_file(upload_id: str) -> dict[str, Any] | None:

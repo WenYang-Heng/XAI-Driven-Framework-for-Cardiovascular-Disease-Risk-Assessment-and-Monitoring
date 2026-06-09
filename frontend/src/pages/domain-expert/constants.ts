@@ -140,31 +140,23 @@ export const featureLabels: Record<string, string> = {
   thal: "Thalassemia",
 };
 
-export const batchTemplateRows = [
-  ["P001", "55", "1", "4", "145", "220", "0", "1", "150", "1", "1.4", "2", "0", "7"],
-  ["P002", "60", "1", "3", "150", "260", "1", "0", "140", "1", "2.1", "2", "1", "7"],
-];
-
-export const batchTemplateCsv = [
-  batchTemplateColumns.join(","),
-  ...batchTemplateRows.map((row) => row.join(",")),
-].join("\n");
+export const batchTemplateCsv = `${batchTemplateColumns.join(",")}\n`;
 
 export const csvFeatureGuide = [
-  ["patient_reference_id", "Patient Reference ID", "Anonymised case ID, e.g. P001 or CASE-2026-0001"],
-  ["age", "Age", "Age in years"],
-  ["sex", "Sex", "0 = Female, 1 = Male"],
-  ["cp", "Chest Pain Type", "1 = Typical angina, 2 = Atypical angina, 3 = Non-anginal pain, 4 = Asymptomatic"],
-  ["trestbps", "Resting Blood Pressure", "Resting blood pressure in mmHg"],
-  ["chol", "Serum Cholesterol", "Serum cholesterol in mg/dL"],
-  ["fbs", "Fasting Blood Sugar", "0 = No, 1 = Yes"],
-  ["restecg", "Resting ECG Result", "0 = Normal, 1 = ST-T wave abnormality, 2 = Left ventricular hypertrophy"],
-  ["thalach", "Maximum Heart Rate", "Maximum heart rate achieved"],
-  ["exang", "Exercise-Induced Angina", "0 = No, 1 = Yes"],
-  ["oldpeak", "ST Depression", "ST depression value"],
-  ["slope", "ST Segment Slope", "1 = Upsloping, 2 = Flat, 3 = Downsloping"],
-  ["ca", "Number of Major Vessels Coloured by Fluoroscopy", "0-3"],
-  ["thal", "Thalassemia", "3 = Normal, 6 = Fixed defect, 7 = Reversible defect"],
+  ["patient_reference_id", "Patient Reference ID", "Optional"],
+  ["age", "Age *", "Age in years"],
+  ["sex", "Sex *", "0 = Female, 1 = Male"],
+  ["cp", "Chest Pain Type *", "1 = Typical angina, 2 = Atypical angina, 3 = Non-anginal pain, 4 = Asymptomatic"],
+  ["trestbps", "Resting Blood Pressure *", "Resting blood pressure in mmHg"],
+  ["chol", "Serum Cholesterol *", "Serum cholesterol in mg/dL"],
+  ["fbs", "Fasting Blood Sugar *", "0 = No, 1 = Yes"],
+  ["restecg", "Resting ECG Result *", "0 = Normal, 1 = ST-T wave abnormality, 2 = Left ventricular hypertrophy"],
+  ["thalach", "Maximum Heart Rate *", "Maximum heart rate achieved"],
+  ["exang", "Exercise-Induced Angina *", "0 = No, 1 = Yes"],
+  ["oldpeak", "ST Depression *", "ST depression value"],
+  ["slope", "ST Segment Slope *", "1 = Upsloping, 2 = Flat, 3 = Downsloping"],
+  ["ca", "Number of Major Vessels Coloured by Fluoroscopy *", "0-3"],
+  ["thal", "Thalassemia *", "3 = Normal, 6 = Fixed defect, 7 = Reversible defect"],
 ];
 
 export const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL ?? "http://localhost:8000";

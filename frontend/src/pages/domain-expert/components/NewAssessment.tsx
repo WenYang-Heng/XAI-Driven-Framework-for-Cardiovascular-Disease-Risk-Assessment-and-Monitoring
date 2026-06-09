@@ -294,13 +294,12 @@ export function SinglePatientEntry({
   return (
     <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <TextField
-        label="Patient Reference ID"
+        label="Patient Reference ID (optional)"
         value={form.patientId}
         onChange={(value) => updateField("patientId", value)}
-        placeholder="Leave blank for new patient"
       />
       <TextField
-        label="Age"
+        label="Age *"
         type="number"
         value={form.age}
         onChange={(value) => updateField("age", value)}
@@ -308,7 +307,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.age?.tone}
       />
       <SelectField
-        label="Sex"
+        label="Sex *"
         value={form.sex}
         onChange={(value) => updateField("sex", value)}
         options={[
@@ -319,7 +318,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.sex?.tone}
       />
       <SelectField
-        label="Chest Pain Type"
+        label="Chest Pain Type *"
         value={form.chestPain}
         onChange={(value) => updateField("chestPain", value)}
         options={[
@@ -332,7 +331,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.chestPain?.tone}
       />
       <TextField
-        label="Resting Blood Pressure"
+        label="Resting Blood Pressure *"
         unit="mmHg"
         type="number"
         value={form.restingBp}
@@ -341,7 +340,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.restingBp?.tone}
       />
       <TextField
-        label="Serum Cholesterol"
+        label="Serum Cholesterol *"
         unit="mg/dL"
         type="number"
         value={form.cholesterol}
@@ -350,7 +349,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.cholesterol?.tone}
       />
       <SelectField
-        label="Fasting Blood Sugar > 120 mg/dL"
+        label="Fasting Blood Sugar > 120 mg/dL *"
         value={form.fastingBloodSugar}
         onChange={(value) => updateField("fastingBloodSugar", value)}
         options={[
@@ -361,7 +360,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.fastingBloodSugar?.tone}
       />
       <SelectField
-        label="Resting ECG Result"
+        label="Resting ECG Result *"
         value={form.restingEcg}
         onChange={(value) => updateField("restingEcg", value)}
         options={[
@@ -373,7 +372,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.restingEcg?.tone}
       />
       <TextField
-        label="Maximum Heart Rate Achieved"
+        label="Maximum Heart Rate Achieved *"
         type="number"
         value={form.maxHeartRate}
         onChange={(value) => updateField("maxHeartRate", value)}
@@ -381,7 +380,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.maxHeartRate?.tone}
       />
       <SelectField
-        label="Exercise-Induced Angina"
+        label="Exercise-Induced Angina *"
         value={form.exerciseAngina}
         onChange={(value) => updateField("exerciseAngina", value)}
         options={[
@@ -392,7 +391,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.exerciseAngina?.tone}
       />
       <TextField
-        label="ST Depression / Oldpeak"
+        label="ST Depression / Oldpeak *"
         type="number"
         step="0.1"
         value={form.oldpeak}
@@ -401,7 +400,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.oldpeak?.tone}
       />
       <SelectField
-        label="Slope of Peak Exercise ST Segment"
+        label="Slope of Peak Exercise ST Segment *"
         value={form.slope}
         onChange={(value) => updateField("slope", value)}
         options={[
@@ -413,7 +412,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.slope?.tone}
       />
       <SelectField
-        label="Number of Major Vessels Coloured by Fluoroscopy"
+        label="Number of Major Vessels Coloured by Fluoroscopy *"
         value={form.vessels}
         onChange={(value) => updateField("vessels", value)}
         options={[
@@ -426,7 +425,7 @@ export function SinglePatientEntry({
         validationTone={fieldStates.vessels?.tone}
       />
       <SelectField
-        label="Thalassemia Result"
+        label="Thalassemia Result *"
         value={form.thalassemia}
         onChange={(value) => updateField("thalassemia", value)}
         options={[

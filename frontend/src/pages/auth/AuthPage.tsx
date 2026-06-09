@@ -372,7 +372,7 @@ async function authenticate({
   | { status: "confirmation_required"; message: string }
 > {
   if (!supabaseConfigured || !supabase) {
-    throw new Error("Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY.");
+    throw new Error("Supabase is not configured.");
   }
 
   if (!email || !password) {

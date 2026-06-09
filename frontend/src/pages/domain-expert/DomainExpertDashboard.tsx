@@ -204,7 +204,11 @@ export function DomainExpertDashboard({
         return;
       }
 
-      if (batchPreview?.summary.invalid_rows) {
+      if (!batchPreview || !batchUploadId) {
+        throw new Error("Validate and preview the CSV before confirming batch processing.");
+      }
+
+      if (batchPreview.summary.invalid_rows) {
         throw new Error("Fix invalid CSV rows before confirming batch processing.");
       }
 
