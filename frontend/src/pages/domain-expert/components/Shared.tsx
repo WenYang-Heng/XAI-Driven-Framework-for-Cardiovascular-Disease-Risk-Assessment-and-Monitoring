@@ -7,7 +7,7 @@ import { Button } from '../../../components/ui/Button';
 import { Card, CardHeader } from '../../../components/ui/Card';
 
 export function MetricGrid({
-  selectedModel = "Random Forest",
+  selectedModel = "Neural Network",
   prediction,
   patientReference = "Auto-generated",
 }: {

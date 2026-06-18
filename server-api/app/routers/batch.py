@@ -124,7 +124,7 @@ async def confirm_batch_upload(upload_id: str, request: BatchConfirmRequest) -> 
                 "predicted_class": result.predicted_class,
                 "risk_level": result.risk_level,
                 "explanation": result.explanation or [],
-                "xai": result.xai.model_dump() if result.xai else None,
+                "xai": result.xai.model_dump(mode="json") if result.xai else None,
                 "model_version": result.model_version or f"uci-heart-{request.model_name}",
             }
             request_id, result_id, patient_case_id, saved_patient_reference_id = await storage.save_prediction(
@@ -155,7 +155,7 @@ async def confirm_batch_upload(upload_id: str, request: BatchConfirmRequest) -> 
                 "predicted_class": result.predicted_class,
                 "risk_level": result.risk_level,
                 "explanation": result.explanation or [],
-                "xai": result.xai.model_dump() if result.xai else None,
+                "xai": result.xai.model_dump(mode="json") if result.xai else None,
             }
         )
 

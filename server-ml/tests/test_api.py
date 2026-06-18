@@ -10,6 +10,8 @@ from app.schemas import (
     BatchPredictionSummary,
     DatasetSummary,
     FeatureContribution,
+    GlobalShapFeatureImportance,
+    GlobalShapResponse,
     LimeExplanation,
     ModelInfo,
     ModelListResponse,
@@ -127,6 +129,99 @@ def test_model_metrics_returns_metrics(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["accuracy"] == 0.85
+
+
+def test_global_shap_returns_ranked_feature_importance(monkeypatch):
+    from app.routers import predict
+
+    monkeypatch.setattr(
+        predict,
+        "compute_global_shap",
+        lambda model_name: GlobalShapResponse(
+            model_name=model_name,
+            dataset_name="UCI Heart Disease",
+            samples_explained=297,
+            explainer_type="TreeExplainer",
+            feature_importance=[
+                GlobalShapFeatureImportance(
+                    feature="oldpeak",
+                    display_name="ST Depression",
+                    mean_abs_shap=0.21,
+                    rank=1,
+                ),
+                GlobalShapFeatureImportance(
+                    feature="cp",
+                    display_name="Chest Pain Type",
+                    mean_abs_shap=0.11,
+                    rank=2,
+                ),
+                *[
+                    GlobalShapFeatureImportance(
+                        feature=f"feature_{index}",
+                        display_name=f"Feature {index}",
+                        mean_abs_shap=round(0.1 - index * 0.001, 6),
+                        rank=index + 3,
+                    )
+                    for index in range(11)
+                ],
+            ],
+            beeswarm_data=None,
+            dependence_data=None,
+            summary_text="The model is most influenced by ST Depression.",
+            generation_status="completed",
+            error_message=None,
+        ),
+    )
+
+    response = client.post("/explanations/global-shap", json={"model_name": "random_forest"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    values = [item["mean_abs_shap"] for item in payload["feature_importance"]]
+    ranks = [item["rank"] for item in payload["feature_importance"]]
+
+    assert payload["generation_status"] == "completed"
+    assert payload["samples_explained"] == 297
+    assert payload["beeswarm_data"] is None
+    assert payload["dependence_data"] is None
+    assert len(payload["feature_importance"]) == 13
+    assert values == sorted(values, reverse=True)
+    assert ranks == list(range(1, 14))
+
+
+def test_global_shap_supports_neural_network_kernel_explainer(monkeypatch):
+    from app.routers import predict
+
+    monkeypatch.setattr(
+        predict,
+        "compute_global_shap",
+        lambda model_name: GlobalShapResponse(
+            model_name=model_name,
+            dataset_name="UCI Heart Disease",
+            samples_explained=297,
+            explainer_type="KernelExplainer",
+            feature_importance=[
+                GlobalShapFeatureImportance(
+                    feature="oldpeak",
+                    display_name="ST Depression",
+                    mean_abs_shap=0.21,
+                    rank=1,
+                )
+            ],
+            beeswarm_data=None,
+            dependence_data=None,
+            summary_text="The model is most influenced by ST Depression.",
+            generation_status="completed",
+            error_message=None,
+        ),
+    )
+
+    response = client.post("/explanations/global-shap", json={"model_name": "neural_network"})
+
+    assert response.status_code == 200
+    assert response.json()["generation_status"] == "completed"
+    assert response.json()["explainer_type"] == "KernelExplainer"
+    assert response.json()["feature_importance"][0]["rank"] == 1
 
 
 def test_batch_rejects_unsupported_file_type():

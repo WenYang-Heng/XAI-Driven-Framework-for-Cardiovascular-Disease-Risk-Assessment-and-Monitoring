@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,30 @@ class XaiExplanation(BaseModel):
     shap: ShapExplanation
     lime: LimeExplanation
     summary: list[str]
+
+
+class GlobalShapRequest(BaseModel):
+    model_name: ModelName
+
+
+class GlobalShapFeatureImportance(BaseModel):
+    feature: str
+    display_name: str
+    mean_abs_shap: float
+    rank: int
+
+
+class GlobalShapResponse(BaseModel):
+    model_name: ModelName
+    dataset_name: str
+    samples_explained: int
+    explainer_type: str | None
+    feature_importance: list[GlobalShapFeatureImportance]
+    beeswarm_data: Any | None = None
+    dependence_data: Any | None = None
+    summary_text: str | None = None
+    generation_status: Literal["completed", "failed", "unavailable"]
+    error_message: str | None = None
 
 
 class RiskPredictionResponse(BaseModel):
@@ -104,6 +128,10 @@ class ModelMetricsResponse(BaseModel):
     f1_score: float
     auc_roc: float
     confusion_matrix: ConfusionMatrix
+
+
+class ModelMetricsListResponse(BaseModel):
+    metrics: list[ModelMetricsResponse]
 
 
 class DatasetSummary(BaseModel):

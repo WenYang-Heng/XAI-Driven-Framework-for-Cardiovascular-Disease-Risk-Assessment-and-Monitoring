@@ -17,13 +17,13 @@ def get_profile(user_id: str) -> dict:
 
 @router.post("")
 async def upsert_profile(request: UserProfileRequest) -> dict:
-    profile = await storage.upsert_user_profile(request.model_dump())
+    profile = await storage.upsert_user_profile(request.model_dump(mode="json"))
     return {"success": True, "profile": profile}
 
 
 @router.patch("/{user_id}")
 async def update_profile(user_id: str, request: UserProfileRequest) -> dict:
-    payload = request.model_dump()
+    payload = request.model_dump(mode="json")
     payload["user_id"] = user_id
     profile = await storage.upsert_user_profile(payload)
     return {"success": True, "profile": profile}

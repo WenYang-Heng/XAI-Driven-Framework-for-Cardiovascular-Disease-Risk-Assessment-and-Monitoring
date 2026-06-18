@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 from fastapi import UploadFile
 
-from app.models import BatchPredictionResponse, ModelMetricsResponse, PredictionResponse
+from app.models import BatchPredictionResponse, ModelMetricsListResponse, ModelMetricsResponse, PredictionResponse
 
 
 SERVER_ML_BASE_URL = os.getenv("SERVER_ML_BASE_URL", "http://localhost:8001").rstrip("/")
@@ -23,6 +23,13 @@ async def get_model_metrics(model_name: str) -> ModelMetricsResponse:
         response = await client.get(f"{SERVER_ML_BASE_URL}/models/{model_name}/metrics")
         response.raise_for_status()
         return ModelMetricsResponse(**response.json())
+
+
+async def get_all_model_metrics() -> ModelMetricsListResponse:
+    async with httpx.AsyncClient(timeout=120) as client:
+        response = await client.get(f"{SERVER_ML_BASE_URL}/models/metrics")
+        response.raise_for_status()
+        return ModelMetricsListResponse(**response.json())
 
 
 async def predict(payload: dict[str, Any]) -> PredictionResponse:

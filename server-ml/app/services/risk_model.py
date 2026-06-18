@@ -25,9 +25,12 @@ from xgboost import XGBClassifier
 from app.schemas import (
     ConfusionMatrix,
     FeatureContribution,
+    GlobalShapFeatureImportance,
+    GlobalShapResponse,
     LimeExplanation,
     ModelInfo,
     ModelListResponse,
+    ModelMetricsListResponse,
     ModelMetricsResponse,
     ModelName,
     RiskPredictionRequest,
@@ -39,6 +42,7 @@ from app.services.dataset import FEATURE_COLUMNS, load_heart_disease_data
 
 
 MODEL_VERSION_PREFIX = "uci-heart"
+MODEL_TRAINING_STRATEGY = "holdout-train-split-v1"
 MODEL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
 
 MODEL_INFOS = [
@@ -80,6 +84,22 @@ FEATURE_LABELS = {
     "thal": "Thalassemia",
 }
 
+GLOBAL_FEATURE_DISPLAY_NAMES = {
+    "age": "Age",
+    "sex": "Sex",
+    "cp": "Chest Pain Type",
+    "trestbps": "Resting Blood Pressure",
+    "chol": "Serum Cholesterol",
+    "fbs": "Fasting Blood Sugar",
+    "restecg": "Resting ECG Result",
+    "thalach": "Maximum Heart Rate Achieved",
+    "exang": "Exercise-Induced Angina",
+    "oldpeak": "ST Depression",
+    "slope": "Slope of Peak Exercise ST Segment",
+    "ca": "Number of Major Vessels",
+    "thal": "Thalassemia",
+}
+
 
 class XGBoostModel:
     def __init__(self) -> None:
@@ -112,6 +132,12 @@ def list_models() -> ModelListResponse:
     return ModelListResponse(models=MODEL_INFOS)
 
 
+def all_model_metrics() -> ModelMetricsListResponse:
+    return ModelMetricsListResponse(
+        metrics=[get_model_metrics(model.name) for model in MODEL_INFOS]
+    )
+
+
 @lru_cache(maxsize=1)
 def get_evaluation_split() -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     X, y = load_heart_disease_data()
@@ -128,7 +154,7 @@ def get_model(model_name: ModelName) -> Any:
 
 
 def train_and_save_model(model_name: ModelName) -> Any:
-    X, y = load_heart_disease_data()
+    X, _, y, _ = get_evaluation_split()
     model = _build_model(model_name)
     model.fit(X, y)
     _save_model_artifact(model_name, model)
@@ -137,9 +163,8 @@ def train_and_save_model(model_name: ModelName) -> Any:
 
 @lru_cache(maxsize=4)
 def get_model_metrics(model_name: ModelName) -> ModelMetricsResponse:
-    X_train, X_test, y_train, y_test = get_evaluation_split()
-    model = _build_model(model_name)
-    model.fit(X_train, y_train)
+    _, X_test, _, y_test = get_evaluation_split()
+    model = get_model(model_name)
 
     predicted = model.predict(X_test)
     probabilities = model.predict_proba(X_test)[:, 1]
@@ -181,6 +206,46 @@ def predict_risk(request: RiskPredictionRequest) -> RiskPredictionResponse:
         model_version=f"{MODEL_VERSION_PREFIX}-{request.model_name}",
         xai=xai,
     )
+
+
+def compute_global_shap(model_name: ModelName) -> GlobalShapResponse:
+    try:
+        model = get_model(model_name)
+        X, _ = load_heart_disease_data()
+        sample = _global_shap_sample(X)
+        explainer, shap_input, explainer_type = _global_shap_explainer_and_input(model_name, model, sample)
+        if explainer_type == "KernelExplainer":
+            raw_values = explainer.shap_values(shap_input, nsamples=80)
+        else:
+            raw_values = explainer.shap_values(shap_input)
+        shap_values = _class_one_matrix(raw_values)
+        feature_importance = _global_feature_importance(shap_values)
+
+        return GlobalShapResponse(
+            model_name=model_name,
+            dataset_name="UCI Heart Disease",
+            samples_explained=len(sample),
+            explainer_type=explainer_type,
+            feature_importance=feature_importance,
+            beeswarm_data=None,
+            dependence_data=None,
+            summary_text=_global_shap_summary(feature_importance),
+            generation_status="completed",
+            error_message=None,
+        )
+    except Exception as error:
+        return GlobalShapResponse(
+            model_name=model_name,
+            dataset_name="UCI Heart Disease",
+            samples_explained=0,
+            explainer_type=None,
+            feature_importance=[],
+            beeswarm_data=None,
+            dependence_data=None,
+            summary_text=None,
+            generation_status="failed",
+            error_message=str(error),
+        )
 
 
 def _build_model(model_name: ModelName) -> Any:
@@ -239,6 +304,8 @@ def _load_model_artifact(model_name: ModelName) -> Any | None:
     if isinstance(artifact, dict):
         if artifact.get("feature_columns") != FEATURE_COLUMNS:
             return None
+        if artifact.get("training_strategy") != MODEL_TRAINING_STRATEGY:
+            return None
         return artifact["model"]
 
     return artifact
@@ -249,6 +316,7 @@ def _save_model_artifact(model_name: ModelName, model: Any) -> None:
     artifact = {
         "model_name": model_name,
         "model_version": f"{MODEL_VERSION_PREFIX}-{model_name}",
+        "training_strategy": MODEL_TRAINING_STRATEGY,
         "feature_columns": FEATURE_COLUMNS,
         "model": model,
     }
@@ -427,6 +495,128 @@ def _tree_model_input(model_name: ModelName, model: Any, input_frame: pd.DataFra
     if model_name == "xgboost":
         return model.imputer.transform(input_frame)
     return model.named_steps["imputer"].transform(input_frame)
+
+
+def _global_shap_sample(X: pd.DataFrame) -> pd.DataFrame:
+    sample_size = min(300, len(X))
+    if len(X) <= sample_size:
+        return X.reset_index(drop=True)
+    return X.sample(n=sample_size, random_state=42).reset_index(drop=True)
+
+
+def _global_shap_explainer_and_input(model_name: ModelName, model: Any, sample: pd.DataFrame) -> tuple[Any, np.ndarray, str]:
+    import shap
+
+    if model_name == "xgboost":
+        shap_input = model.imputer.transform(sample)
+        explainer = shap.TreeExplainer(
+            model.classifier,
+            data=shap_input,
+            feature_perturbation="interventional",
+            model_output="probability",
+        )
+        return explainer, shap_input, "TreeExplainer"
+
+    if model_name == "random_forest":
+        shap_input = model.named_steps["imputer"].transform(sample)
+        explainer = shap.TreeExplainer(
+            model.named_steps["classifier"],
+            data=shap_input,
+            feature_perturbation="interventional",
+            model_output="probability",
+        )
+        return explainer, shap_input, "TreeExplainer"
+
+    if model_name == "logistic_regression":
+        imputed = model.named_steps["imputer"].transform(sample)
+        shap_input = model.named_steps["scaler"].transform(imputed)
+        explainer = shap.LinearExplainer(model.named_steps["classifier"], shap_input)
+        return explainer, shap_input, "LinearExplainer"
+
+    if model_name == "neural_network":
+        background = _background_sample()
+
+        def predict_positive(data: Any) -> np.ndarray:
+            frame = pd.DataFrame(data, columns=FEATURE_COLUMNS)
+            return model.predict_proba(frame)[:, 1]
+
+        explainer = shap.KernelExplainer(predict_positive, background.to_numpy(dtype=float))
+        return explainer, sample.to_numpy(dtype=float), "KernelExplainer"
+
+    raise ValueError(f"Global SHAP is not supported for model: {model_name}")
+
+
+def _class_one_matrix(raw_values: Any) -> np.ndarray:
+    if hasattr(raw_values, "values"):
+        raw_values = raw_values.values
+
+    if isinstance(raw_values, list):
+        values = np.asarray(raw_values[1], dtype=float)
+    else:
+        values = np.asarray(raw_values, dtype=float)
+        if values.ndim == 3:
+            values = values[:, :, 1]
+
+    if values.ndim != 2:
+        raise ValueError(f"Expected SHAP values with 2 dimensions, received shape {values.shape}.")
+    if values.shape[1] != len(FEATURE_COLUMNS):
+        raise ValueError(
+            f"Expected {len(FEATURE_COLUMNS)} SHAP feature columns, received {values.shape[1]}."
+        )
+
+    return values
+
+
+def _global_feature_importance(shap_values: np.ndarray) -> list[GlobalShapFeatureImportance]:
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    ranked = sorted(
+        zip(FEATURE_COLUMNS, mean_abs_shap, strict=True),
+        key=lambda item: float(item[1]),
+        reverse=True,
+    )
+    return [
+        GlobalShapFeatureImportance(
+            feature=feature,
+            display_name=GLOBAL_FEATURE_DISPLAY_NAMES.get(feature, feature),
+            mean_abs_shap=round(float(value), 6),
+            rank=index + 1,
+        )
+        for index, (feature, value) in enumerate(ranked)
+    ]
+
+
+def _global_shap_summary(feature_importance: list[GlobalShapFeatureImportance]) -> str | None:
+    if not feature_importance:
+        return None
+
+    top_features = [item.display_name for item in feature_importance[:5]]
+    if len(top_features) == 1:
+        feature_text = top_features[0]
+    else:
+        feature_text = f"{', '.join(top_features[:-1])}, and {top_features[-1]}"
+
+    return (
+        f"The model is most influenced by {feature_text}. "
+        "These features have the strongest average impact on the model's CVD risk prediction across the dataset."
+    )
+
+
+def _global_shap_unavailable(model_name: ModelName) -> GlobalShapResponse:
+    return GlobalShapResponse(
+        model_name=model_name,
+        dataset_name="UCI Heart Disease",
+        samples_explained=0,
+        explainer_type=None,
+        feature_importance=[],
+        beeswarm_data=None,
+        dependence_data=None,
+        summary_text=None,
+        generation_status="unavailable",
+        error_message=(
+            "Global SHAP for neural_network is currently unavailable because "
+            "KernelExplainer is computationally expensive."
+        ),
+    )
 
 
 def _fallback_shap_explanation(model: Any, input_frame: pd.DataFrame, risk_score: float) -> ShapExplanation:

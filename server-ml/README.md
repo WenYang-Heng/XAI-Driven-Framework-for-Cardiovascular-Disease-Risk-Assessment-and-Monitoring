@@ -13,7 +13,7 @@ The service fetches dataset `id=45` with `ucimlrepo`, keeps the 13 input attribu
 ```powershell
 cd server-ml
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 

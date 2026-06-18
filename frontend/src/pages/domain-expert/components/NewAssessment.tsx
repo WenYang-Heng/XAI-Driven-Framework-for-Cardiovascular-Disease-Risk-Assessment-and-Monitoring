@@ -115,11 +115,6 @@ export function NewAssessment({
               </div>
             </div>
           </div>
-
-          <p className="mt-5 rounded-2xl border border-cyan-100 bg-white/70 px-4 py-3 text-sm leading-6 text-cyan-800">
-            The selected model will be used to generate the risk score, risk
-            category, and XAI explanations for this assessment.
-          </p>
         </section>
 
         {assessmentMode === "single" ? (
@@ -374,6 +369,7 @@ export function SinglePatientEntry({
       <TextField
         label="Maximum Heart Rate Achieved *"
         type="number"
+        unit="bpm"
         value={form.maxHeartRate}
         onChange={(value) => updateField("maxHeartRate", value)}
         validationMessage={fieldStates.maxHeartRate?.message}
@@ -394,6 +390,7 @@ export function SinglePatientEntry({
         label="ST Depression / Oldpeak *"
         type="number"
         step="0.1"
+        unit="mm"
         value={form.oldpeak}
         onChange={(value) => updateField("oldpeak", value)}
         validationMessage={fieldStates.oldpeak?.message}

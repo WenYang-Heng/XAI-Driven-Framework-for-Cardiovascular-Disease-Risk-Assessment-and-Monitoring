@@ -22,7 +22,7 @@ export function DomainExpertDashboard({
   const [selectedBatchRow, setSelectedBatchRow] = useState<BatchApiRow | null>(null);
   const [form, setForm] = useState<PatientForm>(defaultForm);
   const [selectedModel, setSelectedModel] =
-    useState<AssessmentModelSelection>("");
+    useState<AssessmentModelSelection>("Neural Network");
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [batchFile, setBatchFile] = useState<File | null>(null);
   const [batchUploadId, setBatchUploadId] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export function DomainExpertDashboard({
   const [batchResult, setBatchResult] = useState<BatchApiResponse | null>(null);
   const [predictionFeatureValues, setPredictionFeatureValues] = useState<Record<string, string> | null>(null);
   const [modelPerformance, setModelPerformance] = useState<ModelPerformance>(
-    fallbackModelPerformance["Random Forest"],
+    fallbackModelPerformance["Neural Network"],
   );
   const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
   const [isAssessmentLoading, setIsAssessmentLoading] = useState(false);
@@ -41,7 +41,7 @@ export function DomainExpertDashboard({
 
   const current = tabMeta[activeTab];
   const selectedModelKey = selectedModel ? modelProfiles[selectedModel].key : null;
-  const selectedModelForDisplay: AssessmentModel = selectedModel || "Random Forest";
+  const selectedModelForDisplay: AssessmentModel = selectedModel || "Neural Network";
   const userId = currentUser?.id;
 
   useEffect(() => {
@@ -49,7 +49,7 @@ export function DomainExpertDashboard({
 
     async function loadModelPerformance() {
       if (!selectedModel || !selectedModelKey) {
-        setModelPerformance(fallbackModelPerformance["Random Forest"]);
+        setModelPerformance(fallbackModelPerformance["Neural Network"]);
         setPerformanceError(null);
         setIsPerformanceLoading(false);
         return;
@@ -475,9 +475,9 @@ function featureValuesFromInputFeatures(features: Record<string, number | string
       "1": "ST-T wave abnormality",
       "2": "Left ventricular hypertrophy",
     }),
-    thalach: valueString(features.thalach),
+    thalach: withUnit(features.thalach, "bpm"),
     exang: categoricalLabel(features.exang, { "0": "No", "1": "Yes" }),
-    oldpeak: valueString(features.oldpeak),
+    oldpeak: withUnit(features.oldpeak, "mm"),
     slope: categoricalLabel(features.slope, { "1": "Upsloping", "2": "Flat", "3": "Downsloping" }),
     ca: valueString(features.ca),
     thal: categoricalLabel(features.thal, { "3": "Normal", "6": "Fixed defect", "7": "Reversible defect" }),
@@ -501,5 +501,5 @@ function valueString(value: number | string | null | undefined) {
 function modelSelectionFromKey(modelName: string): AssessmentModel {
   const match = (Object.entries(modelProfiles) as Array<[AssessmentModel, { key: string }]>)
     .find(([, profile]) => profile.key === modelName);
-  return match?.[0] ?? "Random Forest";
+  return match?.[0] ?? "Neural Network";
 }
