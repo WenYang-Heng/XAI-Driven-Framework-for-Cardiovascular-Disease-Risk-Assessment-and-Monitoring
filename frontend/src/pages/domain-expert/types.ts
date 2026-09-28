@@ -44,6 +44,34 @@ export type FeatureContribution = {
   value: number;
 };
 
+export type GlobalShapFeatureImportance = {
+  rank: number;
+  feature: string;
+  display_name?: string | null;
+  mean_abs_shap: number;
+};
+
+export type GlobalShapExplanation = {
+  global_explanation_id: string;
+  model_id: string;
+  dataset_name?: string | null;
+  samples_explained?: number | null;
+  explainer_type?: string | null;
+  explanation_scope?: "global" | "global_summary" | string | null;
+  feature_importance: GlobalShapFeatureImportance[];
+  beeswarm_data?: unknown;
+  dependence_data?: unknown;
+  summary_text?: string | null;
+  generation_status?: "pending" | "completed" | "failed" | "unavailable" | string | null;
+  generated_at?: string | null;
+  updated_at?: string | null;
+  ml_models?: {
+    model_name?: ModelKey | string | null;
+    display_name?: string | null;
+    model_version?: string | null;
+  } | null;
+};
+
 export type XaiExplanation = {
   shap: {
     base_value: number;

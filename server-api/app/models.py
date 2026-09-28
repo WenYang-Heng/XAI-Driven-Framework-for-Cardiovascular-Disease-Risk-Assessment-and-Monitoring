@@ -154,6 +154,36 @@ class ModelMetricsListResponse(BaseModel):
     metrics: list[ModelMetricsResponse] = Field(default_factory=list)
 
 
+class GlobalShapFeatureImportance(BaseModel):
+    rank: int = Field(..., ge=1)
+    feature: str = Field(..., min_length=1)
+    display_name: str | None = None
+    mean_abs_shap: float = Field(..., ge=0)
+
+
+class GlobalShapModelInfo(BaseModel):
+    model_name: ModelName
+    display_name: str | None = None
+    model_version: str | None = None
+
+
+class GlobalShapExplanationResponse(BaseModel):
+    global_explanation_id: UUID | str
+    model_id: UUID | str
+    dataset_name: str | None = None
+    samples_explained: int | None = Field(None, ge=0)
+    explainer_type: str | None = None
+    explanation_scope: str | None = None
+    feature_importance: list[GlobalShapFeatureImportance] = Field(default_factory=list)
+    beeswarm_data: object | None = None
+    dependence_data: object | None = None
+    summary_text: str | None = None
+    generation_status: str | None = None
+    generated_at: datetime | None = None
+    updated_at: datetime | None = None
+    ml_models: GlobalShapModelInfo | None = None
+
+
 class BatchPredictionRowResult(BaseModel):
     row_number: int = Field(..., ge=1)
     patient_reference_id: str | None = Field(None, max_length=64)

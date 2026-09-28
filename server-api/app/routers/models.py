@@ -1,7 +1,7 @@
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from app.models import ModelMetricsListResponse, ModelName
+from app.models import GlobalShapExplanationResponse, ModelMetricsListResponse, ModelName
 from app.services import ml_client, storage
 
 
@@ -37,3 +37,16 @@ async def get_model_metrics(model_name: ModelName) -> dict:
         return payload
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"server-ml request failed: {error}") from error
+
+
+@router.get("/{model_name}/global-shap", response_model=GlobalShapExplanationResponse)
+async def get_model_global_shap(model_name: ModelName) -> dict:
+    try:
+        explanation = await storage.get_global_shap_explanation(model_name)
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"Supabase request failed: {error}") from error
+
+    if not explanation:
+        raise HTTPException(status_code=404, detail="Completed Global SHAP explanation was not found for this model.")
+
+    return explanation

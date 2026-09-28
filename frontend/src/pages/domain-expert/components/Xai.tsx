@@ -6,10 +6,13 @@ import {
   Brain,
   ClipboardList,
   FileSpreadsheet,
+  Info,
+  Layers3,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import type { AssessmentModel, BatchApiResponse, BatchApiRow, FeatureContribution, PredictionResult, XaiTab } from '../types';
+import type { AssessmentModel, BatchApiResponse, BatchApiRow, FeatureContribution, GlobalShapExplanation, GlobalShapFeatureImportance, PredictionResult, XaiTab } from '../types';
 import { xaiTabs } from '../constants';
 import {
   batchAggregateContributions,
@@ -27,11 +30,26 @@ type DirectionLabel = "Increases Risk" | "Reduces Risk";
 type AgreementLevel = "High" | "Moderate" | "Low" | "Unavailable";
 type AgreementStatus = "Match" | "Partial" | "Conflict" | "Missing";
 
+function normaliseGlobalRows(rows: GlobalShapFeatureImportance[] = []) {
+  return rows
+    .map((row) => ({
+      ...row,
+      rank: Number(row.rank),
+      display_name: row.display_name || row.feature,
+      mean_abs_shap: Number(row.mean_abs_shap),
+    }))
+    .filter((row) => Number.isFinite(row.rank) && Number.isFinite(row.mean_abs_shap))
+    .sort((a, b) => a.rank - b.rank);
+}
+
 export function XaiWorkspace({
   activeXaiTab,
   setActiveXaiTab,
   prediction,
   selectedModel,
+  globalShap,
+  isGlobalShapLoading,
+  globalShapError,
   patientFeatureValues,
   onBackToResult,
   onGoToNewAssessment,
@@ -40,31 +58,34 @@ export function XaiWorkspace({
   setActiveXaiTab: (tab: XaiTab) => void;
   prediction: PredictionResult | null;
   selectedModel: AssessmentModel;
+  globalShap: GlobalShapExplanation | null;
+  isGlobalShapLoading: boolean;
+  globalShapError: string | null;
   patientFeatureValues?: Record<string, string> | null;
   onBackToResult: () => void;
   onGoToNewAssessment: () => void;
 }) {
-  if (!prediction) {
+  if (!prediction && !globalShap && !isGlobalShapLoading) {
     return (
       <AssessmentEmptyState
         icon={BarChart3}
         title="XAI visualisation data is not available."
-        description="Run a single-patient assessment first to generate SHAP and LIME explanations."
+        description={globalShapError ?? "Saved Global SHAP data was not found for the selected model. Run an assessment to generate patient-level SHAP and LIME explanations."}
         actionLabel="Go to New Assessment"
         onAction={onGoToNewAssessment}
       />
     );
   }
 
-  const shapRows = displayContributions(sortedByMagnitude(prediction.xai.shap.contributions));
-  const limeRows = displayContributions(sortedByMagnitude(prediction.xai.lime.contributions));
+  const shapRows = prediction ? displayContributions(sortedByMagnitude(prediction.xai.shap.contributions)) : [];
+  const limeRows = prediction ? displayContributions(sortedByMagnitude(prediction.xai.lime.contributions)) : [];
   const hasShap = shapRows.length > 0;
   const hasLime = limeRows.length > 0;
-  const agreement = deriveAgreement(prediction);
+  const agreement = prediction ? deriveAgreement(prediction) : null;
 
   return (
     <div className="space-y-6">
-      {!hasShap && !hasLime ? (
+      {!globalShap && !isGlobalShapLoading && !hasShap && !hasLime ? (
         <XaiEmptyMessage />
       ) : (
         <>
@@ -87,21 +108,36 @@ export function XaiWorkspace({
           </Card>
 
           {activeXaiTab === "overview" ? (
-            <OverviewPanel prediction={prediction} selectedModel={selectedModel} patientFeatureValues={patientFeatureValues} />
+            <OverviewPanel
+              prediction={prediction}
+              selectedModel={selectedModel}
+              globalShap={globalShap}
+              isGlobalShapLoading={isGlobalShapLoading}
+              globalShapError={globalShapError}
+              patientFeatureValues={patientFeatureValues}
+            />
           ) : null}
-          {activeXaiTab === "shap" ? <ShapPanel prediction={prediction} patientFeatureValues={patientFeatureValues} /> : null}
-          {activeXaiTab === "lime" ? <LimePanel prediction={prediction} patientFeatureValues={patientFeatureValues} /> : null}
-          {activeXaiTab === "comparison" ? <ComparisonPanel prediction={prediction} agreement={agreement} /> : null}
+          {activeXaiTab === "shap" ? (
+            prediction ? <ShapPanel prediction={prediction} patientFeatureValues={patientFeatureValues} /> : <PatientXaiRequired method="SHAP" />
+          ) : null}
+          {activeXaiTab === "lime" ? (
+            prediction ? <LimePanel prediction={prediction} patientFeatureValues={patientFeatureValues} /> : <PatientXaiRequired method="LIME" />
+          ) : null}
+          {activeXaiTab === "comparison" ? (
+            prediction && agreement ? <ComparisonPanel prediction={prediction} agreement={agreement} /> : <PatientXaiRequired method="comparison" />
+          ) : null}
 
-          <TechnicalDetails prediction={prediction} />
+          {prediction ? <TechnicalDetails prediction={prediction} /> : null}
 
           <Card className="p-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <p className="text-sm leading-6 text-slate-600">
-                Want to validate or comment on this assessment? Return to the Assessment Result page to submit assessment feedback.
+                {prediction
+                  ? "Want to validate or comment on this assessment? Return to the Assessment Result page to submit assessment feedback."
+                  : "Global SHAP explains model-level behaviour across the saved dataset. Run a patient assessment to unlock local SHAP, LIME, and consistency review."}
               </p>
-              <Button variant="secondary" onClick={onBackToResult}>
-                Back to Assessment Result
+              <Button variant="secondary" onClick={prediction ? onBackToResult : onGoToNewAssessment}>
+                {prediction ? "Back to Assessment Result" : "Go to New Assessment"}
               </Button>
             </div>
           </Card>
@@ -202,56 +238,191 @@ export function BatchXaiWorkspace({
 export function OverviewPanel({
   prediction,
   selectedModel,
+  globalShap,
+  isGlobalShapLoading,
+  globalShapError,
   patientFeatureValues,
 }: {
-  prediction: PredictionResult;
+  prediction: PredictionResult | null;
   selectedModel: AssessmentModel;
+  globalShap: GlobalShapExplanation | null;
+  isGlobalShapLoading: boolean;
+  globalShapError: string | null;
   patientFeatureValues?: Record<string, string> | null;
 }) {
-  const topFactors = deriveMainFactors(prediction, patientFeatureValues).slice(0, 8);
+  const globalRows = normaliseGlobalRows(globalShap?.feature_importance).slice(0, 13);
+  const topRows = globalRows.slice(0, 5);
+  const topFeature = topRows[0];
+  const maxImportance = Math.max(...globalRows.map((row) => row.mean_abs_shap), 0);
+  const patientFactors = prediction ? deriveMainFactors(prediction, patientFeatureValues).slice(0, 5) : [];
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="space-y-6">
       <Card className="p-6">
-        <CardHeader
-          title="Overview"
-          subtitle="Compact summary of the prediction and the main explanation factors."
-        />
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <SummaryPill label="Risk Category" value={`${riskLabel(prediction.risk_level)} Risk`} />
-          <SummaryPill label="Risk Probability" value={formatProbability(prediction.risk_score)} />
-          <SummaryPill label="Model Used" value={selectedModel} />
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <CardHeader
+            title="Global SHAP Overview"
+            subtitle="Saved dataset-level feature importance from public.model_global_explanations."
+          />
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={globalShap?.generation_status === "completed" ? "green" : "amber"}>
+              {globalShap?.generation_status ?? (isGlobalShapLoading ? "loading" : "unavailable")}
+            </Badge>
+            <Badge tone="purple">{selectedModel}</Badge>
+          </div>
         </div>
 
-        <div className="mt-6 overflow-hidden rounded-[20px] border border-slate-200">
-          <table className="w-full text-left text-sm">
+        {globalShapError ? (
+          <p className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+            {globalShapError}
+          </p>
+        ) : null}
+
+        <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryPill label="Dataset" value={globalShap?.dataset_name ?? "UCI Heart Disease"} />
+          <SummaryPill label="Samples Explained" value={globalShap?.samples_explained ? `${globalShap.samples_explained}` : isGlobalShapLoading ? "Loading" : "Unavailable"} />
+          <SummaryPill label="Explainer" value={globalShap?.explainer_type ?? "Unavailable"} />
+          <SummaryPill label="Top Driver" value={topFeature?.display_name ?? "Unavailable"} />
+        </div>
+
+        {globalShap?.summary_text ? (
+          <div className="mt-6 rounded-[18px] border border-cyan-100 bg-cyan-50 p-5">
+            <div className="flex gap-3">
+              <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-cyan-700" />
+              <p className="text-sm leading-6 text-cyan-950">{globalShap.summary_text}</p>
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
+        <Card className="p-6">
+          <CardHeader
+            title="Mean Absolute SHAP by Feature"
+            subtitle="Higher values indicate stronger average influence across the explained dataset."
+          />
+          {globalRows.length ? (
+            <div className="mt-6 h-[460px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={globalRows} layout="vertical" margin={{ left: 16, right: 28 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 12 }} />
+                  <YAxis dataKey="display_name" type="category" width={230} interval={0} tick={{ fontSize: 12 }} />
+                  <Tooltip formatter={(value) => [Number(value).toFixed(6), "Mean |SHAP|"]} />
+                  <Bar dataKey="mean_abs_shap" radius={[7, 7, 7, 7]}>
+                    {globalRows.map((entry) => (
+                      <Cell key={entry.feature} fill={entry.rank <= 3 ? "#0e7490" : entry.rank <= 8 ? "#6366f1" : "#94a3b8"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <GlobalShapLoadingState isLoading={isGlobalShapLoading} />
+          )}
+        </Card>
+
+        <Card className="p-6">
+          <CardHeader title="Influence Profile" subtitle="Ranked Global SHAP values saved for this model." />
+          <div className="mt-5 space-y-3">
+            {topRows.length ? topRows.map((row) => (
+              <div key={row.feature} className="rounded-[18px] border border-slate-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold uppercase text-slate-400">Rank {row.rank}</p>
+                    <p className="mt-1 text-sm font-bold text-slate-950">{row.display_name}</p>
+                    <p className="mt-1 font-mono text-xs text-slate-500">{row.feature}</p>
+                  </div>
+                  <span className="font-mono text-sm font-bold text-cyan-700">{row.mean_abs_shap.toFixed(6)}</span>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-cyan-600"
+                    style={{ width: `${maxImportance ? Math.max((row.mean_abs_shap / maxImportance) * 100, 4) : 0}%` }}
+                  />
+                </div>
+              </div>
+            )) : (
+              <GlobalShapLoadingState isLoading={isGlobalShapLoading} />
+            )}
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-6">
+        <CardHeader title="Feature Importance Table" subtitle="Raw fields from feature_importance JSONB." />
+        <div className="mt-5 overflow-x-auto rounded-[18px] border border-slate-200">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
               <tr>
+                <th className="px-4 py-3 font-bold">Rank</th>
+                <th className="px-4 py-3 font-bold">Display Name</th>
                 <th className="px-4 py-3 font-bold">Feature</th>
-                <th className="px-4 py-3 font-bold">Patient Value</th>
-                <th className="px-4 py-3 font-bold">Direction</th>
+                <th className="px-4 py-3 font-bold">Mean Absolute SHAP</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {topFactors.map((row) => (
+              {globalRows.map((row) => (
                 <tr key={row.feature}>
-                  <td className="px-4 py-3 font-semibold text-slate-800">{row.featureLabel}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.patientValue ?? "Unavailable"}</td>
-                  <td className="px-4 py-3"><DirectionBadge direction={row.direction} /></td>
+                  <td className="px-4 py-3 font-bold text-slate-800">{row.rank}</td>
+                  <td className="px-4 py-3 font-semibold text-slate-800">{row.display_name}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-500">{row.feature}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-cyan-700">{row.mean_abs_shap.toFixed(6)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {!globalRows.length ? <GlobalShapLoadingState isLoading={isGlobalShapLoading} /> : null}
         </div>
       </Card>
 
-      <Card className="p-6">
-        <CardHeader title="Label Guide" subtitle="Plain-language meanings used across this page." />
-        <div className="mt-5 space-y-3">
-          <GuideItem title="Increases Risk" text="The feature pushed the prediction toward a higher CVD risk." tone="amber" />
-          <GuideItem title="Reduces Risk" text="The feature pushed the prediction toward a lower CVD risk." tone="green" />
-        </div>
-      </Card>
+      {prediction ? (
+        <Card className="p-6">
+          <CardHeader
+            title="Current Patient Context"
+            subtitle="Local factors from the active assessment, shown for comparison with global model behaviour."
+          />
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <SummaryPill label="Risk Category" value={`${riskLabel(prediction.risk_level)} Risk`} />
+            <SummaryPill label="Risk Probability" value={formatProbability(prediction.risk_score)} />
+            <SummaryPill label="Model Used" value={selectedModel} />
+          </div>
+          <div className="mt-6 overflow-hidden rounded-[18px] border border-slate-200">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-bold">Feature</th>
+                  <th className="px-4 py-3 font-bold">Patient Value</th>
+                  <th className="px-4 py-3 font-bold">Direction</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {patientFactors.map((row) => (
+                  <tr key={row.feature}>
+                    <td className="px-4 py-3 font-semibold text-slate-800">{row.featureLabel}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.patientValue ?? "Unavailable"}</td>
+                    <td className="px-4 py-3"><DirectionBadge direction={row.direction} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-6">
+          <div className="flex gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+              <Info className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-950">Patient-level XAI is not open yet</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                This overview is loaded from the precomputed global explanation. Run a single-patient assessment to compare these global drivers with local SHAP and LIME outputs.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -518,6 +689,36 @@ function MethodEmptyState({ title, description }: { title: string; description: 
         </div>
       </div>
     </Card>
+  );
+}
+
+function PatientXaiRequired({ method }: { method: "SHAP" | "LIME" | "comparison" }) {
+  return (
+    <Card className="p-6">
+      <div className="flex gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700 ring-1 ring-cyan-100">
+          <Layers3 className="h-5 w-5" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-slate-950">Run a patient assessment to view {method}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            The Overview tab uses saved global SHAP data. This tab needs a current prediction because it explains one patient-level model output.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function GlobalShapLoadingState({ isLoading }: { isLoading: boolean }) {
+  return (
+    <div className="p-5">
+      <p className="rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+        {isLoading
+          ? "Loading saved Global SHAP feature importance..."
+          : "No Global SHAP feature_importance values are available for this model."}
+      </p>
+    </div>
   );
 }
 

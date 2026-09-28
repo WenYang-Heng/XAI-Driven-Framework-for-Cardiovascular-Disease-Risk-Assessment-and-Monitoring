@@ -700,6 +700,5 @@ def _build_xai_summary(
     summary.append("This explanation supports clinical review and should not be treated as a standalone diagnosis.")
     return summary
 
-
 def _feature_label(feature: str) -> str:
     return FEATURE_LABELS.get(feature, feature)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AssessmentModel, AssessmentModelSelection, AssessmentMode, BatchApiResponse, BatchApiRow, BatchPreviewResponse, DomainExpertUser, MainTab, ModelPerformance, PatientForm, PatientReferenceMode, PredictionApiResponse, PredictionResult, XaiTab } from './types';
+import type { AssessmentModel, AssessmentModelSelection, AssessmentMode, BatchApiResponse, BatchApiRow, BatchPreviewResponse, DomainExpertUser, GlobalShapExplanation, MainTab, ModelPerformance, PatientForm, PatientReferenceMode, PredictionApiResponse, PredictionResult, XaiTab } from './types';
 import { API_BASE_URL, defaultForm, fallbackModelPerformance, modelProfiles, tabMeta } from './constants';
 import { fallbackXai, formToPredictionPayload } from './utils';
 import { Sidebar, TopHeader } from './components/Layout';
@@ -34,9 +34,12 @@ export function DomainExpertDashboard({
   const [modelPerformance, setModelPerformance] = useState<ModelPerformance>(
     fallbackModelPerformance["Neural Network"],
   );
+  const [globalShap, setGlobalShap] = useState<GlobalShapExplanation | null>(null);
   const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
+  const [isGlobalShapLoading, setIsGlobalShapLoading] = useState(false);
   const [isAssessmentLoading, setIsAssessmentLoading] = useState(false);
   const [performanceError, setPerformanceError] = useState<string | null>(null);
+  const [globalShapError, setGlobalShapError] = useState<string | null>(null);
   const [assessmentError, setAssessmentError] = useState<string | null>(null);
 
   const current = tabMeta[activeTab];
@@ -86,6 +89,58 @@ export function DomainExpertDashboard({
 
     return () => controller.abort();
   }, [selectedModel, selectedModelKey]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    async function loadGlobalShap() {
+      if (!selectedModelKey) {
+        setGlobalShap(null);
+        setGlobalShapError(null);
+        setIsGlobalShapLoading(false);
+        return;
+      }
+
+      setIsGlobalShapLoading(true);
+      setGlobalShapError(null);
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/models/${selectedModelKey}/global-shap`,
+        );
+
+        if (!response.ok) {
+          throw new Error(response.status === 404
+            ? "No completed Global SHAP explanation was found for this model."
+            : "The API returned an error while loading Global SHAP.");
+        }
+
+        const data = (await response.json()) as GlobalShapExplanation;
+        if (!isCurrent) {
+          return;
+        }
+        setGlobalShap(normaliseGlobalShap(data));
+      } catch (error) {
+        if (!isCurrent) {
+          return;
+        }
+        setGlobalShap(null);
+        setGlobalShapError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load the saved Global SHAP explanation from the API.",
+        );
+      }
+
+      setIsGlobalShapLoading(false);
+    }
+
+    loadGlobalShap();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [selectedModelKey]);
 
   const patientSummary = useMemo(
     () => patientSummaryFromForm(form),
@@ -349,6 +404,9 @@ export function DomainExpertDashboard({
                   setActiveXaiTab={setActiveXaiTab}
                   prediction={prediction}
                   selectedModel={selectedModelForDisplay}
+                  globalShap={globalShap}
+                  isGlobalShapLoading={isGlobalShapLoading}
+                  globalShapError={globalShapError}
                   patientFeatureValues={predictionFeatureValues}
                   onBackToResult={() => setActiveTab("result")}
                   onGoToNewAssessment={() => {
@@ -394,6 +452,30 @@ export function DomainExpertDashboard({
       </div>
     </main>
   );
+}
+
+function normaliseGlobalShap(data: unknown): GlobalShapExplanation | null {
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const row = data as GlobalShapExplanation;
+  const featureImportance = Array.isArray(row.feature_importance)
+    ? row.feature_importance
+        .map((item) => ({
+          rank: Number(item.rank),
+          feature: String(item.feature ?? ""),
+          display_name: item.display_name ?? null,
+          mean_abs_shap: Number(item.mean_abs_shap),
+        }))
+        .filter((item) => item.feature && Number.isFinite(item.mean_abs_shap))
+        .sort((a, b) => a.rank - b.rank)
+    : [];
+
+  return {
+    ...row,
+    feature_importance: featureImportance,
+  };
 }
 
 function formToInputFeatures(form: PatientForm): Record<string, string> {

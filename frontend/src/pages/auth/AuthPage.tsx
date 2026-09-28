@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
+  ArrowLeft,
   ArrowRight,
   ClipboardList,
   Lock,
@@ -17,7 +18,7 @@ import { Card, CardHeader } from "../../components/ui/Card";
 import { API_BASE_URL } from "../domain-expert/constants";
 import { supabase, supabaseConfigured } from "../../lib/supabase";
 
-type AuthMode = "login" | "register";
+type AuthMode = "login" | "register" | "forgot-password" | "reset-password";
 export type UserRole = "general-user" | "domain-expert" | "admin";
 export type AuthenticatedUser = {
   id: string;
@@ -54,10 +55,14 @@ const roleOptions: {
 
 export function AuthPage({
   onAuthenticated,
+  initialMode = "login",
+  onPasswordResetComplete,
 }: {
   onAuthenticated?: (role: UserRole, user: AuthenticatedUser) => void;
+  initialMode?: Extract<AuthMode, "login" | "reset-password">;
+  onPasswordResetComplete?: () => void;
 }) {
-  const [mode, setMode] = useState<AuthMode>("login");
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [role, setRole] = useState<UserRole>("general-user");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -68,6 +73,14 @@ export function AuthPage({
   const [isLoading, setIsLoading] = useState(false);
 
   const isRegister = mode === "register";
+  const isForgotPassword = mode === "forgot-password";
+  const isResetPassword = mode === "reset-password";
+  const isCredentialMode = mode === "login" || mode === "register";
+  const pageCopy = getAuthPageCopy(mode);
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
 
   return (
     <main className="min-h-screen bg-[#F8FAFC] text-slate-950">
@@ -92,35 +105,31 @@ export function AuthPage({
         <section className="flex flex-1 items-center justify-center px-5 py-10 sm:px-8">
           <div className="w-full max-w-[760px]">
             <Card className="p-6 sm:p-8 lg:p-10">
-              <div className="flex rounded-[18px] bg-slate-100 p-1">
-                <AuthTab
-                  active={mode === "login"}
-                  label="Login"
-                  onClick={() => {
-                    setMode("login");
-                    setError(null);
-                    setNotice(null);
-                  }}
-                />
-                <AuthTab
-                  active={mode === "register"}
-                  label="Register"
-                  onClick={() => {
-                    setMode("register");
-                    setError(null);
-                    setNotice(null);
-                  }}
-                />
-              </div>
+              {isCredentialMode ? (
+                <div className="flex rounded-[18px] bg-slate-100 p-1">
+                  <AuthTab
+                    active={mode === "login"}
+                    label="Login"
+                    onClick={() => {
+                      setMode("login");
+                      resetFeedback(setError, setNotice);
+                    }}
+                  />
+                  <AuthTab
+                    active={mode === "register"}
+                    label="Register"
+                    onClick={() => {
+                      setMode("register");
+                      resetFeedback(setError, setNotice);
+                    }}
+                  />
+                </div>
+              ) : null}
 
               <CardHeader
-                className="mt-8"
-                title={isRegister ? "Create your account" : "Welcome back"}
-                subtitle={
-                  isRegister
-                    ? "Choose a role and enter your details."
-                    : "Select your role and sign in."
-                }
+                className={isCredentialMode ? "mt-8" : ""}
+                title={pageCopy.title}
+                subtitle={pageCopy.subtitle}
                 action={
                   <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-cyan-50 text-cyan-700 sm:flex">
                     <ShieldCheck className="h-6 w-6" />
@@ -128,50 +137,52 @@ export function AuthPage({
                 }
               />
 
-              <div className="mt-7">
-                <p className="text-sm font-semibold text-slate-700">
-                  Workspace role
-                </p>
-                <div className="mt-3 grid gap-3 md:grid-cols-3">
-                  {roleOptions.map((option) => {
-                    const Icon = option.icon;
-                    const selected = role === option.id;
+              {isCredentialMode ? (
+                <div className="mt-7">
+                  <p className="text-sm font-semibold text-slate-700">
+                    Workspace role
+                  </p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-3">
+                    {roleOptions.map((option) => {
+                      const Icon = option.icon;
+                      const selected = role === option.id;
 
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => setRole(option.id)}
-                        className={`rounded-[20px] border p-4 text-left transition focus:outline-none focus:ring-4 focus:ring-cyan-100 ${
-                          selected
-                            ? "border-cyan-300 bg-cyan-50 text-cyan-950 shadow-sm"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50/60"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`flex h-10 w-10 items-center justify-center rounded-2xl ${
-                              selected
-                                ? "bg-cyan-600 text-white"
-                                : "bg-slate-100 text-slate-500"
-                            }`}
-                          >
-                            <Icon className="h-5 w-5" />
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => setRole(option.id)}
+                          className={`rounded-[20px] border p-4 text-left transition focus:outline-none focus:ring-4 focus:ring-cyan-100 ${
+                            selected
+                              ? "border-cyan-300 bg-cyan-50 text-cyan-950 shadow-sm"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-cyan-200 hover:bg-cyan-50/60"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`flex h-10 w-10 items-center justify-center rounded-2xl ${
+                                selected
+                                  ? "bg-cyan-600 text-white"
+                                  : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              <Icon className="h-5 w-5" />
+                            </div>
+                            <span className="text-sm font-bold">
+                              {option.label}
+                            </span>
                           </div>
-                          <span className="text-sm font-bold">
-                            {option.label}
-                          </span>
-                        </div>
-                        <p className="mt-3 text-sm leading-6 text-slate-500">
-                          {option.description}
-                        </p>
-                      </button>
-                    );
-                  })}
+                          <p className="mt-3 text-sm leading-6 text-slate-500">
+                            {option.description}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
-              <form className="mt-7 space-y-5">
+              <form className="mt-7 space-y-5" onSubmit={(event) => event.preventDefault()}>
                 {isRegister ? (
                   <AuthField
                     label="Full name"
@@ -182,50 +193,60 @@ export function AuthPage({
                     onChange={setFullName}
                   />
                 ) : null}
-                <AuthField
-                  label="Email address"
-                  type="email"
-                  placeholder="name@cardioxai.org"
-                  icon={Mail}
-                  value={email}
-                  onChange={setEmail}
-                />
-                <AuthField
-                  label="Password"
-                  type="password"
-                  placeholder="Enter your password"
-                  icon={Lock}
-                  value={password}
-                  onChange={setPassword}
-                />
-                {isRegister ? (
+                {!isResetPassword ? (
                   <AuthField
-                    label="Confirm password"
+                    label="Email address"
+                    type="email"
+                    placeholder="name@cardioxai.org"
+                    icon={Mail}
+                    value={email}
+                    onChange={setEmail}
+                  />
+                ) : null}
+                {!isForgotPassword ? (
+                  <AuthField
+                    label={isResetPassword ? "New password" : "Password"}
                     type="password"
-                    placeholder="Re-enter your password"
+                    placeholder={isResetPassword ? "Enter a new password" : "Enter your password"}
+                    icon={Lock}
+                    value={password}
+                    onChange={setPassword}
+                  />
+                ) : null}
+                {isRegister || isResetPassword ? (
+                  <AuthField
+                    label={isResetPassword ? "Confirm new password" : "Confirm password"}
+                    type="password"
+                    placeholder={isResetPassword ? "Re-enter your new password" : "Re-enter your password"}
                     icon={Lock}
                     value={confirmPassword}
                     onChange={setConfirmPassword}
                   />
                 ) : null}
 
-                <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                  <label className="flex items-center gap-3 text-sm font-medium text-slate-600">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-100"
-                    />
-                    Remember this device
-                  </label>
-                  {!isRegister ? (
+                {mode === "login" ? (
+                  <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="flex items-center gap-3 text-sm font-medium text-slate-600">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-100"
+                      />
+                      Remember this device
+                    </label>
                     <button
                       type="button"
+                      onClick={() => {
+                        setMode("forgot-password");
+                        setPassword("");
+                        setConfirmPassword("");
+                        resetFeedback(setError, setNotice);
+                      }}
                       className="text-left text-sm font-semibold text-cyan-700 hover:text-cyan-800"
                     >
                       Forgot password?
                     </button>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
 
                 {error ? (
                   <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
@@ -255,6 +276,18 @@ export function AuthPage({
                         password,
                         confirmPassword,
                       });
+                      if (result.status === "reset_email_sent") {
+                        setNotice(result.message);
+                        return;
+                      }
+                      if (result.status === "password_updated") {
+                        setNotice(result.message);
+                        setPassword("");
+                        setConfirmPassword("");
+                        setMode("login");
+                        onPasswordResetComplete?.();
+                        return;
+                      }
                       if (result.status === "confirmation_required") {
                         setNotice(result.message);
                         setMode("login");
@@ -270,31 +303,91 @@ export function AuthPage({
                     }
                   }}
                 >
-                  {isLoading ? "Working..." : isRegister ? "Create Account" : "Login"}
+                  {isLoading ? "Working..." : pageCopy.buttonLabel}
                   <ArrowRight className="h-4 w-4" />
                 </Button>
+
+                {!isCredentialMode ? (
+                  <Button
+                    className="w-full"
+                    type="button"
+                    variant="secondary"
+                    disabled={isLoading}
+                    onClick={() => {
+                      setMode("login");
+                      setPassword("");
+                      setConfirmPassword("");
+                      resetFeedback(setError, setNotice);
+                    }}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to login
+                  </Button>
+                ) : null}
               </form>
 
-              <div className="mt-7 rounded-[20px] border border-cyan-100 bg-gradient-to-br from-cyan-50/80 via-white to-white p-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-cyan-100 text-cyan-700">
-                    <ClipboardList className="h-5 w-5" />
+              {isCredentialMode ? (
+                <div className="mt-7 rounded-[20px] border border-cyan-100 bg-gradient-to-br from-cyan-50/80 via-white to-white p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-cyan-100 text-cyan-700">
+                      <ClipboardList className="h-5 w-5" />
+                    </div>
+                    <p className="text-sm leading-6 text-cyan-900">
+                      {role === "general-user"
+                        ? "General users land in a personal monitoring workspace with risk explanations, action plans, goals, and reminders."
+                        : role === "domain-expert"
+                          ? "Domain experts land in the assessment and XAI review dashboard after authentication."
+                          : "Admins land in a system management workspace for users, roles, and model configuration."}
+                    </p>
                   </div>
-                  <p className="text-sm leading-6 text-cyan-900">
-                    {role === "general-user"
-                      ? "General users land in a personal monitoring workspace with risk explanations, action plans, goals, and reminders."
-                      : role === "domain-expert"
-                        ? "Domain experts land in the assessment and XAI review dashboard after authentication."
-                        : "Admins land in a system management workspace for users, roles, and model configuration."}
-                  </p>
                 </div>
-              </div>
+              ) : null}
             </Card>
           </div>
         </section>
       </div>
     </main>
   );
+}
+
+function getAuthPageCopy(mode: AuthMode) {
+  if (mode === "register") {
+    return {
+      title: "Create your account",
+      subtitle: "Choose a role and enter your details.",
+      buttonLabel: "Create Account",
+    };
+  }
+
+  if (mode === "forgot-password") {
+    return {
+      title: "Reset your password",
+      subtitle: "Enter your email and we will send a password reset link.",
+      buttonLabel: "Send reset link",
+    };
+  }
+
+  if (mode === "reset-password") {
+    return {
+      title: "Choose a new password",
+      subtitle: "Enter a new password for your CardioXAI account.",
+      buttonLabel: "Update password",
+    };
+  }
+
+  return {
+    title: "Welcome back",
+    subtitle: "Select your role and sign in.",
+    buttonLabel: "Login",
+  };
+}
+
+function resetFeedback(
+  setError: (value: string | null) => void,
+  setNotice: (value: string | null) => void,
+) {
+  setError(null);
+  setNotice(null);
 }
 
 function AuthTab({
@@ -370,9 +463,50 @@ async function authenticate({
 }): Promise<
   | { status: "authenticated"; user: AuthenticatedUser }
   | { status: "confirmation_required"; message: string }
+  | { status: "reset_email_sent"; message: string }
+  | { status: "password_updated"; message: string }
 > {
   if (!supabaseConfigured || !supabase) {
     throw new Error("Supabase is not configured.");
+  }
+
+  if (mode === "forgot-password") {
+    if (!email) {
+      throw new Error("Enter your email address.");
+    }
+
+    const resetResponse = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}${window.location.pathname}`,
+    });
+    if (resetResponse.error) {
+      throw resetResponse.error;
+    }
+
+    return {
+      status: "reset_email_sent",
+      message: "Password reset link sent. Check your email to continue.",
+    };
+  }
+
+  if (mode === "reset-password") {
+    if (!password || !confirmPassword) {
+      throw new Error("Enter and confirm your new password.");
+    }
+
+    if (password !== confirmPassword) {
+      throw new Error("Passwords do not match.");
+    }
+
+    const updateResponse = await supabase.auth.updateUser({ password });
+    if (updateResponse.error) {
+      throw updateResponse.error;
+    }
+
+    await supabase.auth.signOut();
+    return {
+      status: "password_updated",
+      message: "Password updated. Please log in with your new password.",
+    };
   }
 
   if (!email || !password) {

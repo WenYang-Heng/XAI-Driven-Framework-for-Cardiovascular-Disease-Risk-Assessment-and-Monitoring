@@ -80,7 +80,7 @@ def _update_database(table: str, key_name: str, key_value: str, payload: dict[st
 
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(query, {**clean_payload, "_key_value": key_value})
+            cursor.execute(query, _database_params({**clean_payload, "_key_value": key_value}))
 
 
 def _delete_database(table: str, key_name: str, key_value: str) -> None:
@@ -90,20 +90,35 @@ def _delete_database(table: str, key_name: str, key_value: str) -> None:
     query = f"delete from public.{table} where {key_name} = %(_key_value)s"
     with get_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(query, {"_key_value": key_value})
+            cursor.execute(query, _database_params({"_key_value": key_value}))
 
 
 def _database_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: Json(value) if isinstance(value, (dict, list)) else value
+        key: _database_value(value)
         for key, value in payload.items()
+    }
+
+
+def _database_value(value: Any) -> Any:
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, (dict, list)):
+        return Json(value)
+    return value
+
+
+def _database_params(params: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        key: _database_value(value)
+        for key, value in (params or {}).items()
     }
 
 
 def _query_database(query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     with get_connection() as connection:
         with connection.cursor(cursor_factory=RealDictCursor) as cursor:
-            cursor.execute(query, params or {})
+            cursor.execute(query, _database_params(params))
             rows = cursor.fetchall()
     return [_serialize_row(dict(row)) for row in rows]
 
@@ -242,6 +257,102 @@ async def save_model_metric_snapshot(metrics: dict[str, Any]) -> dict[str, Any]:
 
     _model_metric_snapshots.append(payload)
     return await _insert("model_metric_snapshots", payload)
+
+
+async def get_global_shap_explanation(model_name: str) -> dict[str, Any] | None:
+    if database_enabled():
+        rows = _query_database(
+            """
+            select
+              mge.global_explanation_id,
+              mge.model_id,
+              mge.dataset_name,
+              mge.samples_explained,
+              mge.explainer_type,
+              mge.explanation_scope,
+              mge.feature_importance,
+              mge.beeswarm_data,
+              mge.dependence_data,
+              mge.summary_text,
+              mge.generation_status,
+              mge.generated_at,
+              mge.updated_at,
+              json_build_object(
+                'model_name', mm.model_name,
+                'display_name', mm.display_name,
+                'model_version', mm.model_version
+              ) as ml_models
+            from public.model_global_explanations mge
+            join public.ml_models mm on mm.model_id = mge.model_id
+            where mm.model_name = %(model_name)s
+              and mge.explanation_scope = 'global'
+              and mge.generation_status = 'completed'
+            order by mge.generated_at desc nulls last
+            limit 1
+            """,
+            {"model_name": model_name},
+        )
+        return _normalise_global_shap_row(rows[0]) if rows else None
+
+    if not _supabase_enabled():
+        return None
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+    }
+    params = {
+        "select": (
+            "global_explanation_id,model_id,dataset_name,samples_explained,"
+            "explainer_type,explanation_scope,feature_importance,beeswarm_data,"
+            "dependence_data,summary_text,generation_status,generated_at,updated_at,"
+            "ml_models!inner(model_name,display_name,model_version)"
+        ),
+        "ml_models.model_name": f"eq.{model_name}",
+        "explanation_scope": "eq.global",
+        "generation_status": "eq.completed",
+        "order": "generated_at.desc.nullslast",
+        "limit": "1",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            f"{SUPABASE_URL}/rest/v1/model_global_explanations",
+            headers=headers,
+            params=params,
+        )
+        response.raise_for_status()
+        rows = response.json()
+
+    return _normalise_global_shap_row(rows[0]) if rows else None
+
+
+def _normalise_global_shap_row(row: dict[str, Any]) -> dict[str, Any]:
+    feature_importance = row.get("feature_importance") or []
+    if isinstance(feature_importance, list):
+        cleaned_features = []
+        for item in feature_importance:
+            if not isinstance(item, dict):
+                continue
+            feature = str(item.get("feature") or "")
+            mean_abs_shap = item.get("mean_abs_shap")
+            if not feature:
+                continue
+            try:
+                cleaned_features.append(
+                    {
+                        "rank": int(item.get("rank") or len(cleaned_features) + 1),
+                        "feature": feature,
+                        "display_name": item.get("display_name") or feature,
+                        "mean_abs_shap": float(mean_abs_shap),
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        row["feature_importance"] = sorted(cleaned_features, key=lambda item: item["rank"])
+    else:
+        row["feature_importance"] = []
+
+    return row
 
 
 async def upsert_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
