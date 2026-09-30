@@ -2,80 +2,80 @@ from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
-from ucimlrepo import fetch_ucirepo
 
 from app.schemas import DatasetSummary
 
 
-DATASET_ID = 45
-TARGET_COLUMN = "num"
-FALLBACK_DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "raw" / "heart_disease_fallback.csv"
+DATASET_NAME = "Framingham Heart Study"
+DATASET_PATH = Path(__file__).resolve().parents[1] / "resources" / "framingham.csv"
+TARGET_COLUMN = "ten_year_chd"
+
+# Source CSV column -> API feature name. `education` is intentionally excluded:
+# it is not a clinical risk factor and should not be collected by a clinical tool.
+SOURCE_COLUMN_MAP = {
+    "male": "sex",
+    "age": "age",
+    "currentSmoker": "current_smoker",
+    "cigsPerDay": "cigs_per_day",
+    "BPMeds": "bp_meds",
+    "prevalentStroke": "prevalent_stroke",
+    "prevalentHyp": "prevalent_hyp",
+    "diabetes": "diabetes",
+    "totChol": "tot_chol",
+    "sysBP": "sys_bp",
+    "diaBP": "dia_bp",
+    "BMI": "bmi",
+    "heartRate": "heart_rate",
+    "glucose": "glucose",
+    "TenYearCHD": TARGET_COLUMN,
+}
 FEATURE_COLUMNS = [
-    "age",
     "sex",
-    "cp",
-    "trestbps",
-    "chol",
-    "fbs",
-    "restecg",
-    "thalach",
-    "exang",
-    "oldpeak",
-    "slope",
-    "ca",
-    "thal",
+    "age",
+    "current_smoker",
+    "cigs_per_day",
+    "bp_meds",
+    "prevalent_stroke",
+    "prevalent_hyp",
+    "diabetes",
+    "tot_chol",
+    "sys_bp",
+    "dia_bp",
+    "bmi",
+    "heart_rate",
+    "glucose",
 ]
 
 
 @lru_cache(maxsize=1)
 def load_heart_disease_data() -> tuple[pd.DataFrame, pd.Series]:
-    try:
-        heart_disease = fetch_ucirepo(id=DATASET_ID)
-        features = heart_disease.data.features.copy()
-        targets = heart_disease.data.targets.copy()
-    except Exception as error:
-        if not FALLBACK_DATASET_PATH.exists():
-            raise RuntimeError(
-                "Unable to fetch UCI dataset and no fallback dataset found at "
-                f"{FALLBACK_DATASET_PATH}."
-            ) from error
+    if not DATASET_PATH.exists():
+        raise RuntimeError(f"Framingham dataset not found at {DATASET_PATH}.")
 
-        fallback_data = pd.read_csv(FALLBACK_DATASET_PATH)
-        missing_columns = [
-            column for column in [*FEATURE_COLUMNS, TARGET_COLUMN] if column not in fallback_data.columns
-        ]
-        if missing_columns:
-            missing = ", ".join(missing_columns)
-            raise ValueError(f"Fallback dataset is missing required columns: {missing}") from error
+    raw = pd.read_csv(DATASET_PATH, na_values=["NA", ""])
+    missing_columns = [column for column in SOURCE_COLUMN_MAP if column not in raw.columns]
+    if missing_columns:
+        missing = ", ".join(missing_columns)
+        raise ValueError(f"Framingham dataset is missing required columns: {missing}")
 
-        features = fallback_data[FEATURE_COLUMNS].copy()
-        targets = fallback_data[[TARGET_COLUMN]].copy()
+    data = raw[list(SOURCE_COLUMN_MAP)].rename(columns=SOURCE_COLUMN_MAP)
+    data = data.dropna(subset=[TARGET_COLUMN])
 
-    missing_features = [column for column in FEATURE_COLUMNS if column not in features.columns]
-    if missing_features:
-        missing = ", ".join(missing_features)
-        raise ValueError(f"Missing expected UCI feature columns: {missing}")
-
-    if TARGET_COLUMN in targets.columns:
-        target = targets[TARGET_COLUMN]
-    else:
-        target = targets.iloc[:, 0]
-
-    data = features[FEATURE_COLUMNS].copy()
-    data[TARGET_COLUMN] = target
-    data = data.replace("?", pd.NA).dropna()
-
-    X = data[FEATURE_COLUMNS].astype(float)
-    y = (data[TARGET_COLUMN].astype(float) > 0).astype(int)
+    # Missing feature values are kept and imputed inside each model pipeline.
+    X = data[FEATURE_COLUMNS].astype(float).reset_index(drop=True)
+    y = data[TARGET_COLUMN].astype(int).reset_index(drop=True)
     return X, y
 
 
 def get_dataset_summary() -> DatasetSummary:
     X, y = load_heart_disease_data()
     return DatasetSummary(
-        dataset_id=DATASET_ID,
-        dataset_name="UCI Heart Disease",
+        dataset_name=DATASET_NAME,
         input_features=FEATURE_COLUMNS,
         target=TARGET_COLUMN,
-        rows_after_cleaning=len(y),
+        rows=len(y),
+        positive_rate=round(float(y.mean()), 4),
+        missing_values={
+            column: int(count) for column, count in X.isna().sum().items() if count
+        },
     )

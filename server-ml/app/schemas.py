@@ -8,19 +8,20 @@ ModelName = Literal["xgboost", "random_forest", "neural_network", "logistic_regr
 
 class RiskPredictionRequest(BaseModel):
     model_name: ModelName = Field("logistic_regression", description="ML model to use for prediction")
-    age: int = Field(..., ge=0, le=120, examples=[55])
     sex: Literal[0, 1] = Field(..., description="1 = male; 0 = female", examples=[1])
-    cp: Literal[1, 2, 3, 4] = Field(..., description="Chest pain type", examples=[4])
-    trestbps: float = Field(..., gt=0, description="Resting blood pressure in mm Hg", examples=[145])
-    chol: float = Field(..., gt=0, description="Serum cholesterol in mg/dl", examples=[220])
-    fbs: Literal[0, 1] = Field(..., description="Fasting blood sugar > 120 mg/dl", examples=[0])
-    restecg: Literal[0, 1, 2] = Field(..., description="Resting ECG results", examples=[1])
-    thalach: float = Field(..., gt=0, description="Maximum heart rate achieved", examples=[150])
-    exang: Literal[0, 1] = Field(..., description="Exercise induced angina", examples=[1])
-    oldpeak: float = Field(..., ge=0, description="ST depression induced by exercise relative to rest", examples=[1.4])
-    slope: Literal[1, 2, 3] = Field(..., description="Slope of peak exercise ST segment", examples=[2])
-    ca: int = Field(..., ge=0, le=3, description="Number of Major Vessels Coloured by Fluoroscopy", examples=[0])
-    thal: Literal[3, 6, 7] = Field(..., description="3 = normal; 6 = fixed defect; 7 = reversible defect", examples=[7])
+    age: int = Field(..., ge=18, le=100, examples=[55])
+    current_smoker: Literal[0, 1] = Field(..., description="1 = currently smokes", examples=[1])
+    cigs_per_day: float = Field(..., ge=0, le=100, description="Cigarettes smoked per day", examples=[10])
+    bp_meds: Literal[0, 1] = Field(..., description="1 = on blood pressure medication", examples=[0])
+    prevalent_stroke: Literal[0, 1] = Field(..., description="1 = previous stroke", examples=[0])
+    prevalent_hyp: Literal[0, 1] = Field(..., description="1 = diagnosed hypertension", examples=[1])
+    diabetes: Literal[0, 1] = Field(..., description="1 = diabetic", examples=[0])
+    tot_chol: float = Field(..., ge=80, le=700, description="Total cholesterol in mg/dL", examples=[240])
+    sys_bp: float = Field(..., ge=70, le=300, description="Systolic blood pressure in mmHg", examples=[145])
+    dia_bp: float = Field(..., ge=40, le=160, description="Diastolic blood pressure in mmHg", examples=[90])
+    bmi: float = Field(..., ge=12, le=70, description="Body mass index in kg/m2", examples=[27.5])
+    heart_rate: float = Field(..., ge=30, le=200, description="Resting heart rate in bpm", examples=[75])
+    glucose: float = Field(..., ge=40, le=500, description="Glucose in mg/dL", examples=[85])
 
 
 class FeatureContribution(BaseModel):
@@ -71,10 +72,10 @@ class GlobalShapResponse(BaseModel):
 class RiskPredictionResponse(BaseModel):
     model_name: ModelName
     risk_score: float = Field(..., ge=0, le=1, examples=[0.68])
-    predicted_class: Literal[0, 1] = Field(..., description="0 = no heart disease; 1 = heart disease")
+    predicted_class: Literal[0, 1] = Field(..., description="1 = high 10-year CHD risk (score >= 0.20)")
     risk_level: Literal["low", "moderate", "high"] = Field(..., examples=["high"])
     explanation: list[str] = Field(..., examples=[["Exercise induced angina increased the risk estimate."]])
-    model_version: str = Field(..., examples=["uci-heart-logistic-regression"])
+    model_version: str = Field(..., examples=["framingham-chd10-logistic_regression"])
     xai: XaiExplanation
 
 
@@ -119,6 +120,14 @@ class ConfusionMatrix(BaseModel):
     true_positive: int
 
 
+class CrossValidationMetrics(BaseModel):
+    folds: int
+    auc_roc_mean: float
+    auc_roc_std: float
+    brier_score_mean: float
+    brier_score_std: float
+
+
 class ModelMetricsResponse(BaseModel):
     model_name: ModelName
     accuracy: float
@@ -127,6 +136,9 @@ class ModelMetricsResponse(BaseModel):
     specificity: float
     f1_score: float
     auc_roc: float
+    brier_score: float
+    decision_threshold: float
+    cross_validation: CrossValidationMetrics | None = None
     confusion_matrix: ConfusionMatrix
 
 
@@ -135,8 +147,9 @@ class ModelMetricsListResponse(BaseModel):
 
 
 class DatasetSummary(BaseModel):
-    dataset_id: int
     dataset_name: str
     input_features: list[str]
     target: str
-    rows_after_cleaning: int
+    rows: int
+    positive_rate: float
+    missing_values: dict[str, int]

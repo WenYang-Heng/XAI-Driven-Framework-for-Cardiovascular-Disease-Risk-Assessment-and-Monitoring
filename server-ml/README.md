@@ -1,12 +1,13 @@
 # server-ml
 
-FastAPI machine learning service for cardiovascular risk prediction using the UCI ML Heart Disease dataset.
+FastAPI machine learning service that estimates **10-year coronary heart disease (CHD) risk** using the Framingham Heart Study teaching dataset.
 
-The service fetches dataset `id=45` with `ucimlrepo`, keeps the 13 input attributes used by the common heart disease benchmark, and trains cached classifiers on demand.
+The dataset ships with the service at `app/resources/framingham.csv` (4,240 rows), so no download is needed. Models are trained on demand and cached as `.pkl` artifacts.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10–3.12 (the pinned dependencies do not build on 3.14)
+- macOS: `brew install libomp` (required by XGBoost)
 
 ## Setup
 
@@ -42,42 +43,37 @@ The legacy `/api/v1` routes are still registered for compatibility.
 
 ## Dataset
 
-The model uses these input attributes:
-
-- `age`
-- `sex`
-- `cp`
-- `trestbps`
-- `chol`
-- `fbs`
-- `restecg`
-- `thalach`
-- `exang`
-- `oldpeak`
-- `slope`
-- `ca`
-- `thal`
-
-The predicted target is `num`. Target values greater than `0` are treated as heart disease present (`1`), while `0` is treated as no heart disease (`0`).
-
-After cleaning rows with missing values, the binary target distribution is:
+Source: Framingham Heart Study teaching extract (Kaggle copy). The target is `ten_year_chd` (source column `TenYearCHD`): whether the participant developed CHD within 10 years.
 
 | Binary class | Meaning | Rows | Percentage |
 | --- | --- | ---: | ---: |
-| `0` | No heart disease | 160 | 53.87% |
-| `1` | Heart disease present | 137 | 46.13% |
+| `0` | No CHD within 10 years | 3,596 | 84.8% |
+| `1` | CHD within 10 years | 644 | 15.2% |
 
-The original UCI target is a multi-class severity field:
+The model uses 14 input features (API name ← source column):
 
-| Raw `num` value | Meaning in this project | Rows | Percentage |
-| --- | --- | ---: | ---: |
-| `0` | No heart disease | 160 | 53.87% |
-| `1` | Heart disease severity 1 | 54 | 18.18% |
-| `2` | Heart disease severity 2 | 35 | 11.78% |
-| `3` | Heart disease severity 3 | 35 | 11.78% |
-| `4` | Heart disease severity 4 | 13 | 4.38% |
+| Feature | Source | Meaning |
+| --- | --- | --- |
+| `sex` | `male` | 1 = male, 0 = female |
+| `age` | `age` | Years (training range 32–70) |
+| `current_smoker` | `currentSmoker` | 1 = currently smokes |
+| `cigs_per_day` | `cigsPerDay` | Cigarettes per day |
+| `bp_meds` | `BPMeds` | 1 = on blood pressure medication |
+| `prevalent_stroke` | `prevalentStroke` | 1 = previous stroke |
+| `prevalent_hyp` | `prevalentHyp` | 1 = diagnosed hypertension |
+| `diabetes` | `diabetes` | 1 = diabetic |
+| `tot_chol` | `totChol` | Total cholesterol, mg/dL |
+| `sys_bp` | `sysBP` | Systolic BP, mmHg |
+| `dia_bp` | `diaBP` | Diastolic BP, mmHg |
+| `bmi` | `BMI` | kg/m² |
+| `heart_rate` | `heartRate` | Resting heart rate, bpm |
+| `glucose` | `glucose` | mg/dL |
 
-For model training, `num=1`, `num=2`, `num=3`, and `num=4` are grouped together as binary class `1`.
+`education` is dropped: it is not a clinical risk factor and should not be collected by a clinical tool.
+
+Missing values (glucose 388, BPMeds 53, totChol 50, cigsPerDay 29, BMI 19, heartRate 1) are kept and median-imputed inside each model pipeline. LIME and SHAP background samples use complete rows only.
+
+Known limitations: a mid-20th-century US cohort that is predominantly white, ages 32–70, a CHD-only outcome, and no HDL cholesterol.
 
 ## Models
 
@@ -114,27 +110,13 @@ When a prediction is requested, the service first checks whether the selected mo
 
 ## How the ML Model Works
 
-The service trains a supervised binary classification model. The model learns the relationship between the 13 clinical input features and the binary target:
+The service trains a supervised binary classifier on the 14 features above:
 
-- `0` = no heart disease
-- `1` = heart disease present
-
-The training flow is:
-
-1. Fetch the UCI Heart Disease dataset with `ucimlrepo`.
-2. Keep the 13 selected clinical features.
-3. Clean the dataset by replacing missing values marked as `?` and dropping incomplete rows.
-4. Convert the original target column `num` into a binary label:
-
-   ```text
-   num = 0       -> class 0
-   num = 1 to 4  -> class 1
-   ```
-
-5. Train the selected model on the cleaned feature matrix `X` and binary target `y`.
-6. Cache the trained model so repeated predictions do not retrain it every time.
-
-The available models use slightly different learning methods:
+1. Load `app/resources/framingham.csv` and rename columns to API names.
+2. Split 80/20 train/test, stratified on the target (`random_state=42`).
+3. Train the selected model on the training split (median imputation inside the pipeline).
+4. Evaluate on the untouched test split, and run 5-fold stratified cross-validation on the training split.
+5. Save the model as a `.pkl` artifact.
 
 | Model | How it learns |
 | --- | --- |
@@ -143,7 +125,18 @@ The available models use slightly different learning methods:
 | `xgboost` | Builds boosted decision trees, where each tree improves on previous errors. |
 | `neural_network` | Learns non-linear patterns through hidden layers and outputs class probabilities. |
 
-`random_forest` and `logistic_regression` use `class_weight="balanced"` to reduce bias if one class has more rows than the other. The current binary dataset is fairly balanced, but this still helps the model treat both classes carefully.
+No model uses class re-weighting. Re-weighting would inflate the probabilities, and a clinician must be able to read `risk_score = 0.18` as "about an 18% 10-year risk". Calibration is reported with the Brier score (lower is better).
+
+Current results (test split, threshold 0.20):
+
+| Model | AUC | Brier | Sensitivity | Specificity | 5-fold CV AUC |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `logistic_regression` | 0.702 | 0.121 | 0.45 | 0.79 | 0.732 ± 0.031 |
+| `random_forest` | 0.683 | 0.122 | 0.43 | 0.79 | 0.724 ± 0.034 |
+| `xgboost` | 0.673 | 0.124 | 0.43 | 0.78 | 0.717 ± 0.033 |
+| `neural_network` | 0.656 | 0.125 | 0.47 | 0.74 | 0.685 ± 0.012 |
+
+AUCs of about 0.70–0.73 match published results on this dataset. The much higher AUCs seen on the UCI Cleveland dataset come from diagnostic inputs (angiography, stress tests), not from better risk prediction.
 
 ## How the Risk Score Is Calculated
 
@@ -152,7 +145,7 @@ The risk score is the model's predicted probability for class `1`.
 In this project:
 
 ```text
-class 1 = heart disease present
+class 1 = CHD within 10 years
 ```
 
 So:
@@ -169,7 +162,7 @@ def predict_risk(request: RiskPredictionRequest) -> RiskPredictionResponse:
     input_frame = pd.DataFrame([_feature_payload(request)], columns=FEATURE_COLUMNS)
 
     risk_score = round(float(model.predict_proba(input_frame)[0][1]), 4)
-    predicted_class = 1 if risk_score >= 0.5 else 0
+    predicted_class = 1 if risk_score >= HIGH_RISK_THRESHOLD else 0
     risk_level = _risk_level(risk_score)
 ```
 
@@ -185,7 +178,7 @@ It can be read like this:
 | --- | --- |
 | `predict_proba(input_frame)` | Return probability values for each class. |
 | `[0]` | Select the first patient row in the prediction batch. |
-| `[1]` | Select the probability for class `1`, heart disease present. |
+| `[1]` | Select the probability for class `1`, CHD within 10 years. |
 
 The `predict_proba` output gives probabilities for both classes. For example, the model may return:
 
@@ -197,8 +190,8 @@ This means:
 
 | Value | Meaning |
 | --- | --- |
-| `0.32` | Probability of class `0`, no heart disease |
-| `0.68` | Probability of class `1`, heart disease present |
+| `0.32` | Probability of class `0`, no CHD within 10 years |
+| `0.68` | Probability of class `1`, CHD within 10 years |
 
 Therefore:
 
@@ -209,7 +202,7 @@ risk_score = 0.68
 This can be interpreted as:
 
 ```text
-The model estimates a 68% probability that the patient belongs to the heart disease present class.
+The model estimates a 68% probability that the patient develops CHD within 10 years.
 ```
 
 Different model types produce this probability in different ways:
@@ -224,7 +217,7 @@ Different model types produce this probability in different ways:
 For logistic regression, the simplified formula is:
 
 ```text
-weighted_score = b0 + b1(age) + b2(sex) + b3(cp) + ... + b13(thal)
+weighted_score = b0 + b1(sex) + b2(age) + b3(current_smoker) + ... + b14(glucose)
 risk_score = 1 / (1 + e^(-weighted_score))
 ```
 
@@ -236,78 +229,43 @@ probability of class 1
 
 ## How the Risk Category Is Assigned
 
-After calculating the numeric `risk_score`, the service assigns two outputs:
+`risk_score` is the estimated probability of CHD within 10 years. It is banded using common 10-year-risk cut-offs:
 
-- `predicted_class`
-- `risk_level`
-
-The final predicted class uses a `0.50` threshold:
-
-| Risk score | Predicted class | Meaning |
-| --- | --- | --- |
-| `< 0.50` | `0` | No heart disease predicted |
-| `>= 0.50` | `1` | Heart disease present predicted |
-
-The code is:
-
-```python
-predicted_class = 1 if risk_score >= 0.5 else 0
-```
-
-The displayed risk category uses separate thresholds:
-
-| Risk score range | Risk level |
+| Risk score | Risk level |
 | --- | --- |
-| `0.00` to `0.34` | Low |
-| `0.35` to `0.69` | Moderate |
-| `0.70` to `1.00` | High |
+| `< 0.10` | Low |
+| `0.10` to `< 0.20` | Moderate |
+| `>= 0.20` | High |
 
-The code is:
+`predicted_class` is `1` when the patient is in the high band (`risk_score >= 0.20`). Accuracy, precision, sensitivity, specificity, F1 and the confusion matrix are all computed at this threshold, so "positive" means "flag for clinical action".
 
-```python
-def _risk_level(score: float) -> str:
-    if score >= 0.7:
-        return "high"
-    if score >= 0.35:
-        return "moderate"
-    return "low"
-```
-
-This means a patient can have:
-
-| Example risk score | Predicted class | Risk level | Explanation |
-| --- | --- | --- | --- |
-| `0.22` | `0` | Low | The model estimates a low probability of heart disease. |
-| `0.48` | `0` | Moderate | The risk level is moderate, but the final class is still no heart disease because it is below `0.50`. |
-| `0.68` | `1` | Moderate | The final class is heart disease present, but the risk category is not high because it is below `0.70`. |
-| `0.82` | `1` | High | The model estimates a high probability of heart disease. |
-
-The risk score is not calculated from the raw dataset percentages. The percentages only describe the class balance of the training dataset. The actual risk score is produced by the trained ML model using the patient's input features.
+The rule-based `explanation` list names the modifiable risk factors that are out of range (smoking, BP ≥ 140/90, total cholesterol ≥ 240, diabetes or glucose ≥ 126, BMI ≥ 30, previous stroke). It also warns when age is outside the 32–70 training range, because that estimate is an extrapolation.
 
 ## Example Prediction
 
 ```powershell
 $body = @{
-  model_name = "xgboost"
-  age = 55
+  model_name = "logistic_regression"
   sex = 1
-  cp = 4
-  trestbps = 145
-  chol = 220
-  fbs = 0
-  restecg = 1
-  thalach = 150
-  exang = 1
-  oldpeak = 1.4
-  slope = 2
-  ca = 0
-  thal = 7
+  age = 58
+  current_smoker = 1
+  cigs_per_day = 20
+  bp_meds = 0
+  prevalent_stroke = 0
+  prevalent_hyp = 1
+  diabetes = 0
+  tot_chol = 260
+  sys_bp = 150
+  dia_bp = 95
+  bmi = 29
+  heart_rate = 80
+  glucose = 90
 } | ConvertTo-Json
 
 Invoke-RestMethod http://localhost:8001/api/v1/predict -Method Post -ContentType "application/json" -Body $body
 ```
 
-The first prediction for each model may take longer because the service downloads the dataset and trains that selected model.
+The first prediction for each model may take longer if its artifact has not been trained yet.
 
 ## Example Metrics Request
 
@@ -315,7 +273,7 @@ The first prediction for each model may take longer because the service download
 Invoke-RestMethod http://localhost:8001/api/v1/models/random_forest/metrics
 ```
 
-Metrics include accuracy, precision, sensitivity/recall, specificity, F1 score, AUC-ROC score, and confusion matrix values.
+Metrics include accuracy, precision, sensitivity/recall, specificity, F1 score, AUC-ROC, Brier score, the decision threshold, 5-fold cross-validation (mean ± SD AUC and Brier), and confusion matrix values.
 
 ## Example Batch Prediction
 

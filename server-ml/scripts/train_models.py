@@ -10,7 +10,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import httpx
 
 from app.schemas import ModelName
-from app.services.risk_model import MODEL_ARTIFACT_DIR, get_model_metrics, train_and_save_model
+from app.services.dataset import DATASET_NAME
+from app.services.risk_model import MODEL_ARTIFACT_DIR, MODEL_VERSION_PREFIX, get_model_metrics, train_and_save_model
 
 
 MODEL_NAMES: tuple[ModelName, ...] = (
@@ -30,8 +31,8 @@ def _supabase_settings() -> tuple[str, str]:
 def _metrics_payload(model_name: ModelName) -> dict[str, Any]:
     metrics = get_model_metrics(model_name).model_dump(mode="json")
     return {
-        "model_version": f"uci-heart-{model_name}",
-        "dataset_name": "UCI Heart Disease",
+        "model_version": f"{MODEL_VERSION_PREFIX}-{model_name}",
+        "dataset_name": DATASET_NAME,
         "accuracy": metrics["accuracy"],
         "precision": metrics["precision"],
         "sensitivity_recall": metrics["sensitivity_recall"],

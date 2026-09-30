@@ -10,13 +10,14 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
+    brier_score_loss,
     confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -24,6 +25,7 @@ from xgboost import XGBClassifier
 
 from app.schemas import (
     ConfusionMatrix,
+    CrossValidationMetrics,
     FeatureContribution,
     GlobalShapFeatureImportance,
     GlobalShapResponse,
@@ -38,11 +40,20 @@ from app.schemas import (
     ShapExplanation,
     XaiExplanation,
 )
-from app.services.dataset import FEATURE_COLUMNS, load_heart_disease_data
+from app.services.dataset import DATASET_NAME, FEATURE_COLUMNS, load_heart_disease_data
 
 
-MODEL_VERSION_PREFIX = "uci-heart"
-MODEL_TRAINING_STRATEGY = "holdout-train-split-v1"
+MODEL_VERSION_PREFIX = "framingham-chd10"
+MODEL_TRAINING_STRATEGY = "framingham-holdout-v2"
+CV_FOLDS = 5
+
+# 10-year CHD risk bands. predicted_class and the classification metrics use the
+# high-risk cut-off so that "positive" means "flag for clinical action".
+MODERATE_RISK_THRESHOLD = 0.10
+HIGH_RISK_THRESHOLD = 0.20
+
+# Age range covered by the Framingham extract; predictions outside it are extrapolations.
+TRAINING_AGE_RANGE = (32, 70)
 MODEL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
 
 MODEL_INFOS = [
@@ -69,36 +80,23 @@ MODEL_INFOS = [
 ]
 
 FEATURE_LABELS = {
-    "age": "Age",
     "sex": "Sex",
-    "cp": "Chest Pain Type",
-    "trestbps": "Resting Blood Pressure",
-    "chol": "Serum Cholesterol",
-    "fbs": "Fasting Blood Sugar",
-    "restecg": "Resting ECG Result",
-    "thalach": "Maximum Heart Rate",
-    "exang": "Exercise-Induced Angina",
-    "oldpeak": "ST Depression",
-    "slope": "ST Segment Slope",
-    "ca": "Number of Major Vessels Coloured by Fluoroscopy",
-    "thal": "Thalassemia",
+    "age": "Age",
+    "current_smoker": "Current Smoker",
+    "cigs_per_day": "Cigarettes per Day",
+    "bp_meds": "On BP Medication",
+    "prevalent_stroke": "Previous Stroke",
+    "prevalent_hyp": "Hypertension",
+    "diabetes": "Diabetes",
+    "tot_chol": "Total Cholesterol",
+    "sys_bp": "Systolic Blood Pressure",
+    "dia_bp": "Diastolic Blood Pressure",
+    "bmi": "BMI",
+    "heart_rate": "Resting Heart Rate",
+    "glucose": "Glucose",
 }
 
-GLOBAL_FEATURE_DISPLAY_NAMES = {
-    "age": "Age",
-    "sex": "Sex",
-    "cp": "Chest Pain Type",
-    "trestbps": "Resting Blood Pressure",
-    "chol": "Serum Cholesterol",
-    "fbs": "Fasting Blood Sugar",
-    "restecg": "Resting ECG Result",
-    "thalach": "Maximum Heart Rate Achieved",
-    "exang": "Exercise-Induced Angina",
-    "oldpeak": "ST Depression",
-    "slope": "Slope of Peak Exercise ST Segment",
-    "ca": "Number of Major Vessels",
-    "thal": "Thalassemia",
-}
+GLOBAL_FEATURE_DISPLAY_NAMES = FEATURE_LABELS
 
 
 class XGBoostModel:
@@ -166,8 +164,8 @@ def get_model_metrics(model_name: ModelName) -> ModelMetricsResponse:
     _, X_test, _, y_test = get_evaluation_split()
     model = get_model(model_name)
 
-    predicted = model.predict(X_test)
     probabilities = model.predict_proba(X_test)[:, 1]
+    predicted = (probabilities >= HIGH_RISK_THRESHOLD).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_test, predicted, labels=[0, 1]).ravel()
     specificity = tn / (tn + fp) if (tn + fp) else 0.0
 
@@ -179,6 +177,9 @@ def get_model_metrics(model_name: ModelName) -> ModelMetricsResponse:
         specificity=round(float(specificity), 4),
         f1_score=round(float(f1_score(y_test, predicted, zero_division=0)), 4),
         auc_roc=round(float(roc_auc_score(y_test, probabilities)), 4),
+        brier_score=round(float(brier_score_loss(y_test, probabilities)), 4),
+        decision_threshold=HIGH_RISK_THRESHOLD,
+        cross_validation=get_cross_validation_metrics(model_name),
         confusion_matrix=ConfusionMatrix(
             true_negative=int(tn),
             false_positive=int(fp),
@@ -188,11 +189,35 @@ def get_model_metrics(model_name: ModelName) -> ModelMetricsResponse:
     )
 
 
+@lru_cache(maxsize=4)
+def get_cross_validation_metrics(model_name: ModelName) -> CrossValidationMetrics:
+    """Stratified k-fold on the training split only, so the test set stays untouched."""
+    X_train, _, y_train, _ = get_evaluation_split()
+    folds = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=42)
+    aucs: list[float] = []
+    briers: list[float] = []
+
+    for train_index, valid_index in folds.split(X_train, y_train):
+        model = _build_model(model_name)
+        model.fit(X_train.iloc[train_index], y_train.iloc[train_index])
+        probabilities = model.predict_proba(X_train.iloc[valid_index])[:, 1]
+        aucs.append(float(roc_auc_score(y_train.iloc[valid_index], probabilities)))
+        briers.append(float(brier_score_loss(y_train.iloc[valid_index], probabilities)))
+
+    return CrossValidationMetrics(
+        folds=CV_FOLDS,
+        auc_roc_mean=round(float(np.mean(aucs)), 4),
+        auc_roc_std=round(float(np.std(aucs)), 4),
+        brier_score_mean=round(float(np.mean(briers)), 4),
+        brier_score_std=round(float(np.std(briers)), 4),
+    )
+
+
 def predict_risk(request: RiskPredictionRequest) -> RiskPredictionResponse:
     model = get_model(request.model_name)
     input_frame = pd.DataFrame([_feature_payload(request)], columns=FEATURE_COLUMNS)
     risk_score = round(float(model.predict_proba(input_frame)[0][1]), 4)
-    predicted_class = 1 if risk_score >= 0.5 else 0
+    predicted_class = 1 if risk_score >= HIGH_RISK_THRESHOLD else 0
     risk_level = _risk_level(risk_score)
     explanation = _build_explanation(request)
     xai = _build_xai_explanation(request.model_name, model, input_frame, risk_score, risk_level, explanation)
@@ -223,7 +248,7 @@ def compute_global_shap(model_name: ModelName) -> GlobalShapResponse:
 
         return GlobalShapResponse(
             model_name=model_name,
-            dataset_name="UCI Heart Disease",
+            dataset_name=DATASET_NAME,
             samples_explained=len(sample),
             explainer_type=explainer_type,
             feature_importance=feature_importance,
@@ -236,7 +261,7 @@ def compute_global_shap(model_name: ModelName) -> GlobalShapResponse:
     except Exception as error:
         return GlobalShapResponse(
             model_name=model_name,
-            dataset_name="UCI Heart Disease",
+            dataset_name=DATASET_NAME,
             samples_explained=0,
             explainer_type=None,
             feature_importance=[],
@@ -256,7 +281,7 @@ def _build_model(model_name: ModelName) -> Any:
         classifier = RandomForestClassifier(
             n_estimators=300,
             max_depth=6,
-            class_weight="balanced",
+            min_samples_leaf=10,
             random_state=42,
         )
         return Pipeline(
@@ -270,8 +295,9 @@ def _build_model(model_name: ModelName) -> Any:
         classifier = MLPClassifier(
             hidden_layer_sizes=(32, 16),
             activation="relu",
-            alpha=0.001,
+            alpha=0.01,
             max_iter=1000,
+            early_stopping=True,
             random_state=42,
         )
         return Pipeline(
@@ -286,7 +312,7 @@ def _build_model(model_name: ModelName) -> Any:
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
             ("scaler", StandardScaler()),
-            ("classifier", LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)),
+            ("classifier", LogisticRegression(max_iter=1000, random_state=42)),
         ]
     )
 
@@ -330,9 +356,9 @@ def _feature_payload(request: RiskPredictionRequest) -> dict[str, float | int]:
 
 
 def _risk_level(score: float) -> str:
-    if score >= 0.7:
+    if score >= HIGH_RISK_THRESHOLD:
         return "high"
-    if score >= 0.35:
+    if score >= MODERATE_RISK_THRESHOLD:
         return "moderate"
     return "low"
 
@@ -340,23 +366,33 @@ def _risk_level(score: float) -> str:
 def _build_explanation(request: RiskPredictionRequest) -> list[str]:
     explanation: list[str] = []
 
-    if request.cp == 4:
-        explanation.append("Asymptomatic chest pain type is associated with higher disease risk in this dataset.")
-    if request.exang == 1:
-        explanation.append("Exercise induced angina increased the risk estimate.")
-    if request.oldpeak >= 1:
-        explanation.append("ST depression during exercise contributed to the risk estimate.")
-    if request.ca > 0:
-        explanation.append("More coloured major vessels contributed to the risk estimate.")
-    if request.thal in (6, 7):
-        explanation.append("Thalassemia defect category contributed to the risk estimate.")
-    if request.trestbps >= 140:
-        explanation.append("Elevated resting blood pressure contributed to the risk estimate.")
-    if request.chol >= 240:
-        explanation.append("High cholesterol contributed to the risk estimate.")
+    if request.current_smoker == 1:
+        explanation.append(
+            f"Current smoking ({request.cigs_per_day:g} cigarettes/day) is a modifiable factor that raises CHD risk."
+        )
+    if request.sys_bp >= 140 or request.dia_bp >= 90:
+        treated = " despite BP medication" if request.bp_meds == 1 else ""
+        explanation.append(
+            f"Blood pressure of {request.sys_bp:g}/{request.dia_bp:g} mmHg is in the hypertensive range{treated}."
+        )
+    if request.tot_chol >= 240:
+        explanation.append(f"Total cholesterol of {request.tot_chol:g} mg/dL is high (>= 240 mg/dL).")
+    if request.diabetes == 1 or request.glucose >= 126:
+        explanation.append("Diabetes or elevated glucose contributes to cardiovascular risk.")
+    if request.bmi >= 30:
+        explanation.append(f"BMI of {request.bmi:g} is in the obese range.")
+    if request.prevalent_stroke == 1:
+        explanation.append("A previous stroke indicates established vascular disease.")
 
     if not explanation:
-        explanation.append("The model did not detect strong high-risk signals from the highlighted clinical fields.")
+        explanation.append("No strongly elevated modifiable risk factors were found in the recorded values.")
+
+    min_age, max_age = TRAINING_AGE_RANGE
+    if not min_age <= request.age <= max_age:
+        explanation.append(
+            f"Age {request.age} is outside the {min_age}-{max_age} range of the training data, "
+            "so this estimate is an extrapolation."
+        )
 
     return explanation
 
@@ -364,8 +400,9 @@ def _build_explanation(request: RiskPredictionRequest) -> list[str]:
 @lru_cache(maxsize=1)
 def _background_sample() -> pd.DataFrame:
     X, _ = load_heart_disease_data()
-    sample_size = min(40, len(X))
-    return X.sample(n=sample_size, random_state=42).reset_index(drop=True)
+    complete = X.dropna()
+    sample_size = min(40, len(complete))
+    return complete.sample(n=sample_size, random_state=42).reset_index(drop=True)
 
 
 @lru_cache(maxsize=4)
@@ -376,7 +413,7 @@ def _lime_explainer(model_name: ModelName) -> Any:
     return LimeTabularExplainer(
         training_data=background.to_numpy(dtype=float),
         feature_names=FEATURE_COLUMNS,
-        class_names=["No heart disease", "Heart disease"],
+        class_names=["No CHD within 10 years", "CHD within 10 years"],
         mode="classification",
         discretize_continuous=True,
         random_state=42,
@@ -498,6 +535,7 @@ def _tree_model_input(model_name: ModelName, model: Any, input_frame: pd.DataFra
 
 
 def _global_shap_sample(X: pd.DataFrame) -> pd.DataFrame:
+    X = X.dropna()
     sample_size = min(300, len(X))
     if len(X) <= sample_size:
         return X.reset_index(drop=True)
@@ -597,14 +635,14 @@ def _global_shap_summary(feature_importance: list[GlobalShapFeatureImportance]) 
 
     return (
         f"The model is most influenced by {feature_text}. "
-        "These features have the strongest average impact on the model's CVD risk prediction across the dataset."
+        "These features have the strongest average impact on the model's 10-year CHD risk prediction across the dataset."
     )
 
 
 def _global_shap_unavailable(model_name: ModelName) -> GlobalShapResponse:
     return GlobalShapResponse(
         model_name=model_name,
-        dataset_name="UCI Heart Disease",
+        dataset_name=DATASET_NAME,
         samples_explained=0,
         explainer_type=None,
         feature_importance=[],

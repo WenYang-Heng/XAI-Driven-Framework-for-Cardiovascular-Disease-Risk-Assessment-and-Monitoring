@@ -39,18 +39,19 @@ def test_dataset_summary_returns_metadata(monkeypatch):
         dataset,
         "get_dataset_summary",
         lambda: DatasetSummary(
-            dataset_id=45,
-            dataset_name="UCI Heart Disease",
+            dataset_name="Framingham Heart Study",
             input_features=["age"],
-            target="num",
-            rows_after_cleaning=297,
+            target="ten_year_chd",
+            rows=4240,
+            positive_rate=0.152,
+            missing_values={"glucose": 388},
         ),
     )
 
     response = client.get("/dataset/summary")
 
     assert response.status_code == 200
-    assert response.json()["dataset_id"] == 45
+    assert response.json()["rows"] == 4240
 
 
 def test_models_returns_four_models(monkeypatch):
@@ -97,8 +98,8 @@ def test_predict_returns_risk_score(monkeypatch):
     assert response.status_code == 200
     assert response.json()["risk_score"] == 0.68
     assert response.json()["predicted_class"] == 1
-    assert len(response.json()["xai"]["shap"]["contributions"]) == 13
-    assert len(response.json()["xai"]["lime"]["contributions"]) == 13
+    assert len(response.json()["xai"]["shap"]["contributions"]) == 14
+    assert len(response.json()["xai"]["lime"]["contributions"]) == 14
     assert response.json()["xai"]["summary"]
 
 
@@ -116,6 +117,8 @@ def test_model_metrics_returns_metrics(monkeypatch):
             specificity=0.86,
             f1_score=0.835,
             auc_roc=0.88,
+            brier_score=0.12,
+            decision_threshold=0.2,
             confusion_matrix={
                 "true_negative": 20,
                 "false_positive": 5,
@@ -139,19 +142,19 @@ def test_global_shap_returns_ranked_feature_importance(monkeypatch):
         "compute_global_shap",
         lambda model_name: GlobalShapResponse(
             model_name=model_name,
-            dataset_name="UCI Heart Disease",
+            dataset_name="Framingham Heart Study",
             samples_explained=297,
             explainer_type="TreeExplainer",
             feature_importance=[
                 GlobalShapFeatureImportance(
-                    feature="oldpeak",
-                    display_name="ST Depression",
+                    feature="sys_bp",
+                    display_name="Systolic Blood Pressure",
                     mean_abs_shap=0.21,
                     rank=1,
                 ),
                 GlobalShapFeatureImportance(
-                    feature="cp",
-                    display_name="Chest Pain Type",
+                    feature="age",
+                    display_name="Age",
                     mean_abs_shap=0.11,
                     rank=2,
                 ),
@@ -197,13 +200,13 @@ def test_global_shap_supports_neural_network_kernel_explainer(monkeypatch):
         "compute_global_shap",
         lambda model_name: GlobalShapResponse(
             model_name=model_name,
-            dataset_name="UCI Heart Disease",
+            dataset_name="Framingham Heart Study",
             samples_explained=297,
             explainer_type="KernelExplainer",
             feature_importance=[
                 GlobalShapFeatureImportance(
-                    feature="oldpeak",
-                    display_name="ST Depression",
+                    feature="sys_bp",
+                    display_name="Systolic Blood Pressure",
                     mean_abs_shap=0.21,
                     rank=1,
                 )
@@ -266,7 +269,7 @@ def test_batch_handles_valid_csv(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["summary"]["successful_rows"] == 1
-    assert len(response.json()["results"][0]["xai"]["shap"]["contributions"]) == 13
+    assert len(response.json()["results"][0]["xai"]["shap"]["contributions"]) == 14
 
 
 def test_batch_returns_failed_row_for_invalid_values(monkeypatch):
@@ -282,7 +285,7 @@ def test_batch_returns_failed_row_for_invalid_values(monkeypatch):
                 BatchPredictionRowResult(
                     row_number=1,
                     status="failed",
-                    error_message="age must be greater than or equal to 0",
+                    error_message="age must be greater than or equal to 18",
                 )
             ],
         ),
@@ -301,19 +304,20 @@ def test_batch_returns_failed_row_for_invalid_values(monkeypatch):
 def _prediction_payload() -> dict:
     return {
         "model_name": "logistic_regression",
-        "age": 55,
         "sex": 1,
-        "cp": 4,
-        "trestbps": 145,
-        "chol": 220,
-        "fbs": 0,
-        "restecg": 1,
-        "thalach": 150,
-        "exang": 1,
-        "oldpeak": 1.4,
-        "slope": 2,
-        "ca": 0,
-        "thal": 7,
+        "age": 55,
+        "current_smoker": 1,
+        "cigs_per_day": 10,
+        "bp_meds": 0,
+        "prevalent_stroke": 0,
+        "prevalent_hyp": 1,
+        "diabetes": 0,
+        "tot_chol": 240,
+        "sys_bp": 145,
+        "dia_bp": 90,
+        "bmi": 27.5,
+        "heart_rate": 75,
+        "glucose": 85,
     }
 
 
@@ -328,19 +332,20 @@ def _xai_payload(final_value: float) -> XaiExplanation:
     contributions = [
         FeatureContribution(feature=feature, value=0.0)
         for feature in [
-            "age",
             "sex",
-            "cp",
-            "trestbps",
-            "chol",
-            "fbs",
-            "restecg",
-            "thalach",
-            "exang",
-            "oldpeak",
-            "slope",
-            "ca",
-            "thal",
+            "age",
+            "current_smoker",
+            "cigs_per_day",
+            "bp_meds",
+            "prevalent_stroke",
+            "prevalent_hyp",
+            "diabetes",
+            "tot_chol",
+            "sys_bp",
+            "dia_bp",
+            "bmi",
+            "heart_rate",
+            "glucose",
         ]
     ]
     return XaiExplanation(
@@ -348,3 +353,32 @@ def _xai_payload(final_value: float) -> XaiExplanation:
         lime=LimeExplanation(contributions=contributions),
         summary=["Rule-based XAI summary."],
     )
+
+
+def test_framingham_dataset_loads_expected_shape():
+    from app.services.dataset import FEATURE_COLUMNS, load_heart_disease_data
+
+    X, y = load_heart_disease_data()
+
+    assert list(X.columns) == FEATURE_COLUMNS
+    assert len(X) == 4240
+    assert set(y.unique()) == {0, 1}
+
+
+def test_risk_bands_use_ten_year_thresholds():
+    from app.services.risk_model import _risk_level
+
+    assert _risk_level(0.05) == "low"
+    assert _risk_level(0.10) == "moderate"
+    assert _risk_level(0.19) == "moderate"
+    assert _risk_level(0.20) == "high"
+
+
+def test_explanation_flags_age_outside_training_range():
+    from app.schemas import RiskPredictionRequest
+    from app.services.risk_model import _build_explanation
+
+    payload = {**_prediction_payload(), "age": 80}
+    explanation = _build_explanation(RiskPredictionRequest(**payload))
+
+    assert any("extrapolation" in line for line in explanation)
