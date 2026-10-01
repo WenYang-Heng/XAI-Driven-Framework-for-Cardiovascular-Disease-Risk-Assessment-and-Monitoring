@@ -292,3 +292,22 @@ def test_validate_features_catches_inconsistent_smoking():
     }
 
     assert validate_features(values) == ["cigs_per_day must be 0 when current_smoker is 0."]
+
+
+def test_models_in_same_band_agree_even_with_wide_spread(monkeypatch):
+    async def same_band_scores(features: dict) -> list[dict]:
+        return [
+            {"model_name": "logistic_regression", "risk_score": 0.43, "risk_level": "high"},
+            {"model_name": "random_forest", "risk_score": 0.32, "risk_level": "high"},
+            {"model_name": "xgboost", "risk_score": 0.42, "risk_level": "high"},
+            {"model_name": "neural_network", "risk_score": 0.50, "risk_level": "high"},
+        ]
+
+    monkeypatch.setattr(ml_client, "predict_scores", same_band_scores)
+    patient = _create_patient()
+
+    agreement = _assess(patient["patient_case_id"])["model_agreement"]
+
+    assert agreement["agrees"] is True
+    assert agreement["spread"] == 0.18
+    assert agreement["message"] is None

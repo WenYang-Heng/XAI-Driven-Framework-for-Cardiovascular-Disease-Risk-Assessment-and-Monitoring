@@ -31,8 +31,6 @@ MODEL_DISPLAY_NAMES = {
     "xgboost": "XGBoost",
     "neural_network": "Neural Network",
 }
-# Models whose scores differ by more than this are flagged as disagreeing.
-AGREEMENT_SPREAD_THRESHOLD = 0.10
 
 _measurements: list[dict[str, Any]] = []
 _memory_default_model = DEFAULT_MODEL_FALLBACK
@@ -454,12 +452,14 @@ async def _model_agreement(features: dict[str, Any], model_name: str) -> dict[st
     values = [score["risk_score"] for score in scores]
     spread = round(max(values) - min(values), 4)
     levels = {score["risk_level"] for score in scores}
-    agrees = len(levels) == 1 and spread <= AGREEMENT_SPREAD_THRESHOLD
+    # The risk band drives the clinical action, so only a band disagreement is flagged;
+    # within-band spread is reported but expected (models diverge most at high risk).
+    agrees = len(levels) == 1
     message = None
     if not agrees:
         message = (
             f"Models disagree: scores range from {min(values):.0%} to {max(values):.0%}"
-            f" across {', '.join(sorted(levels))} risk bands. Review the inputs and drivers carefully."
+            f" across the {', '.join(sorted(levels))} risk bands. Review the inputs and drivers carefully."
         )
     return {
         "available": True,
