@@ -52,17 +52,18 @@ Worklist (home)
                └─ ▸ Technical details: full SHAP / LIME / comparison / model card
 ```
 
-## 4. Data model (migration `007_clinician_revamp.sql`)
+## 4. Data model (migrations `007_clinician_revamp.sql`, `008_fk_indexes_and_function_hardening.sql`) — applied to CardioXAI-dev
 
 - `patient_cases` → becomes the clinical patient profile:
-  `assigned_clinician_id`, `full_name` (optional/pseudonymised), `sex`, `date_of_birth`,
+  `assigned_clinician_id`, `display_name` (optional/pseudonymised), `sex`, `date_of_birth`,
   `current_smoker`, `cigs_per_day`, `bp_meds`, `prevalent_stroke`, `prevalent_hyp`, `diabetes`,
-  `history_source jsonb` (per-field: `self_reported | clinician_verified | imported`, `updated_at`),
+  `history_sources jsonb` (per-field: `self_reported | clinician_verified | imported`, `updated_at`),
   `linked_user_id` → `auth.users` (nullable; patient-app account link, phase 6).
 - `patient_measurements` (per visit): `patient_case_id`, `measured_at`, `sys_bp`, `dia_bp`, `heart_rate`, `bmi`, `height_cm`, `weight_kg`, `tot_chol`, `glucose`, `source`, `recorded_by`.
 - `prediction_requests.input_features` keeps the **exact snapshot** used, plus `input_sources jsonb`.
 - `domain_expert_feedback` adds: `flagged_features jsonb`, `clinical_action text`, `review_status` (`draft | signed_off`), `signed_off_at`.
-- `ml_models` adds `is_active boolean` (exactly one active; partial unique index) and `dataset_name`.
+- `ml_models` adds `is_default boolean` (exactly one default; partial unique index — `is_active` keeps meaning "available"), `brier_score`, `decision_threshold`, `cross_validation`.
+- Adds `model_global_explanations` (previously created outside migrations) and enables RLS on all tables (server-api uses the service-role key).
 
 ## 5. Phases
 
