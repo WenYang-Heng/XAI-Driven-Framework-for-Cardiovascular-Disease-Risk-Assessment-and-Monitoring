@@ -1,12 +1,12 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-from app.routers import admin, batch, health, history, models, patients, predictions, profile
-
 from dotenv import load_dotenv
 
+# Load .env before importing routers: services read environment variables at import time.
 load_dotenv()
 
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from app.routers import admin, batch, clinician, health, history, models, patients, predictions, profile  # noqa: E402
 
 
 app = FastAPI(
@@ -31,6 +31,7 @@ app.include_router(history.router)
 app.include_router(admin.router)
 app.include_router(profile.router)
 app.include_router(patients.router)
+app.include_router(clinician.router)
 
 
 @app.get("/")

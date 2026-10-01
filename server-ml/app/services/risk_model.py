@@ -35,6 +35,8 @@ from app.schemas import (
     ModelMetricsListResponse,
     ModelMetricsResponse,
     ModelName,
+    ModelScore,
+    ModelScoresResponse,
     RiskPredictionRequest,
     RiskPredictionResponse,
     ShapExplanation,
@@ -231,6 +233,16 @@ def predict_risk(request: RiskPredictionRequest) -> RiskPredictionResponse:
         model_version=f"{MODEL_VERSION_PREFIX}-{request.model_name}",
         xai=xai,
     )
+
+
+def score_all_models(request: RiskPredictionRequest) -> ModelScoresResponse:
+    """Risk score from every model without XAI, used to show clinicians model agreement."""
+    input_frame = pd.DataFrame([_feature_payload(request)], columns=FEATURE_COLUMNS)
+    scores = []
+    for info in MODEL_INFOS:
+        risk_score = round(float(get_model(info.name).predict_proba(input_frame)[0][1]), 4)
+        scores.append(ModelScore(model_name=info.name, risk_score=risk_score, risk_level=_risk_level(risk_score)))
+    return ModelScoresResponse(scores=scores)
 
 
 def compute_global_shap(model_name: ModelName) -> GlobalShapResponse:

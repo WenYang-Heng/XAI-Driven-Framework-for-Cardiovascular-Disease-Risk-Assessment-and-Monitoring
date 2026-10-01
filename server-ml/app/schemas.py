@@ -24,6 +24,16 @@ class RiskPredictionRequest(BaseModel):
     glucose: float = Field(..., ge=40, le=500, description="Glucose in mg/dL", examples=[85])
 
 
+class ModelScore(BaseModel):
+    model_name: ModelName
+    risk_score: float = Field(..., ge=0, le=1)
+    risk_level: Literal["low", "moderate", "high"]
+
+
+class ModelScoresResponse(BaseModel):
+    scores: list[ModelScore]
+
+
 class FeatureContribution(BaseModel):
     feature: str
     value: float

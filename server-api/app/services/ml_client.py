@@ -64,3 +64,11 @@ async def predict_batch_bytes(
         response = await client.post(f"{SERVER_ML_BASE_URL}/predict/batch", data=data, files=files)
         response.raise_for_status()
         return BatchPredictionResponse(**response.json())
+
+
+async def predict_scores(features: dict[str, Any]) -> list[dict[str, Any]]:
+    """Risk score from every model (no XAI), used for the model-agreement signal."""
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(f"{SERVER_ML_BASE_URL}/predict/scores", json=features)
+        response.raise_for_status()
+        return response.json().get("scores", [])

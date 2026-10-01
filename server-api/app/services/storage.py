@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import httpx
 from psycopg2.extras import Json, RealDictCursor
 
+from app.features import FEATURE_COLUMNS, FEATURE_LABELS, FEATURE_SET, TRAINING_MEANS
 from app.services.database import database_enabled, get_connection
 
 
@@ -150,23 +151,6 @@ async def log_activity(user_id: str | None, action: str, entity_type: str | None
     await _insert("activity_logs", {key: value for key, value in payload.items() if key != "log_id"})
 
 
-def _feature_keys() -> list[str]:
-    return [
-        "age",
-        "sex",
-        "cp",
-        "trestbps",
-        "chol",
-        "fbs",
-        "restecg",
-        "thalach",
-        "exang",
-        "oldpeak",
-        "slope",
-        "ca",
-        "thal",
-    ]
-
 
 def _feature_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: payload[key] for key in _feature_keys()}
@@ -238,13 +222,15 @@ async def save_model_metric_snapshot(metrics: dict[str, Any]) -> dict[str, Any]:
         "model_id": _model_id(model_name),
         "model_name": model_name,
         "model_version": _model_version(model_name),
-        "dataset_name": "UCI Heart Disease",
+        "dataset_name": "Framingham Heart Study",
         "accuracy": metrics["accuracy"],
         "precision": metrics["precision"],
         "sensitivity_recall": metrics["sensitivity_recall"],
         "specificity": metrics["specificity"],
         "f1_score": metrics["f1_score"],
         "auc_roc": metrics["auc_roc"],
+        "brier_score": metrics.get("brier_score"),
+        "cross_validation": metrics.get("cross_validation"),
         "true_negative": confusion["true_negative"],
         "false_positive": confusion["false_positive"],
         "false_negative": confusion["false_negative"],
@@ -480,6 +466,8 @@ async def save_prediction(
     request_payload: dict[str, Any],
     prediction: dict[str, Any],
     entry_type: str = "single",
+    input_sources: dict[str, Any] | None = None,
+    measurement_id: str | None = None,
 ) -> tuple[str, str, str | None, str | None]:
     request_id = str(uuid4())
     result_id = str(uuid4())
@@ -497,8 +485,13 @@ async def save_prediction(
         "patient_case_id": patient_case_id,
         "model_id": model_id,
         "model_name": request_payload["model_name"],
-        **input_features,
+        # age/sex keep their legacy columns; the full Framingham snapshot lives in input_features.
+        "age": input_features["age"],
+        "sex": input_features["sex"],
+        "feature_set": FEATURE_SET,
         "input_features": input_features,
+        "input_sources": input_sources,
+        "measurement_id": measurement_id,
         "entry_type": entry_type,
         "source": "server-api",
         "assessment_date": _assessment_date(request_payload.get("assessment_date")),
@@ -520,7 +513,7 @@ async def save_prediction(
         "created_at": _now(),
     }
 
-    _requests.append(request_record)
+    _requests.append({**request_record, **input_features})
     _results.append(result_record)
     inserted_request = await _insert("prediction_requests", {key: value for key, value in request_record.items() if key != "request_id"})
     request_id = inserted_request.get("request_id", request_id)
@@ -1164,9 +1157,9 @@ def _database_drift_monitoring() -> dict[str, Any]:
         """
         select
           to_char(created_at::date, 'Mon DD') as day,
-          round(avg(drift_score) filter (where feature_name in ('thalach', 'max_heart_rate'))::numeric, 4) as hr,
-          round(avg(drift_score) filter (where feature_name in ('trestbps', 'resting_bp'))::numeric, 4) as bp,
-          round(avg(drift_score) filter (where feature_name in ('chol', 'cholesterol'))::numeric, 4) as cholesterol
+          round(avg(drift_score) filter (where feature_name = 'heart_rate')::numeric, 4) as hr,
+          round(avg(drift_score) filter (where feature_name = 'sys_bp')::numeric, 4) as bp,
+          round(avg(drift_score) filter (where feature_name = 'tot_chol')::numeric, 4) as cholesterol
         from public.data_drift_snapshots
         where created_at >= now() - interval '7 days'
         group by created_at::date
@@ -1300,7 +1293,7 @@ def _memory_fairness_monitoring() -> dict[str, Any]:
         ("Female patients", lambda row: row.get("sex") == 0),
         ("Male patients", lambda row: row.get("sex") == 1),
         ("Age 65+", lambda row: int(row.get("age") or 0) >= 65),
-        ("High cholesterol", lambda row: float(row.get("chol") or 0) >= 240),
+        ("High cholesterol", lambda row: float(row.get("tot_chol") or 0) >= 240),
     ]
     baseline_rate = _positive_rate([row for row in joined if row.get("sex") == 1])
     cohorts = []
@@ -1353,35 +1346,22 @@ def _memory_error_monitoring() -> dict[str, Any]:
 def _memory_feature_drift() -> list[dict[str, Any]]:
     if not _requests:
         return [
-            {"feature": "Resting BP", "psi": 0.18, "status": "Moderate", "tone": "amber"},
-            {"feature": "Cholesterol", "psi": 0.11, "status": "Stable", "tone": "green"},
-            {"feature": "Max heart rate", "psi": 0.24, "status": "Investigate", "tone": "red"},
-            {"feature": "Oldpeak", "psi": 0.08, "status": "Stable", "tone": "green"},
-            {"feature": "Chest pain type", "psi": 0.15, "status": "Moderate", "tone": "amber"},
+            {"feature": "Systolic BP", "psi": 0.18, "status": "Moderate", "tone": "amber"},
+            {"feature": "Total Cholesterol", "psi": 0.11, "status": "Stable", "tone": "green"},
+            {"feature": "Resting Heart Rate", "psi": 0.24, "status": "Investigate", "tone": "red"},
+            {"feature": "BMI", "psi": 0.08, "status": "Stable", "tone": "green"},
+            {"feature": "Glucose", "psi": 0.15, "status": "Moderate", "tone": "amber"},
         ]
 
-    baseline = {
-        "trestbps": 131.6,
-        "chol": 246.7,
-        "thalach": 149.6,
-        "oldpeak": 1.04,
-        "cp": 3.16,
-    }
-    labels = {
-        "trestbps": "Resting BP",
-        "chol": "Cholesterol",
-        "thalach": "Max heart rate",
-        "oldpeak": "Oldpeak",
-        "cp": "Chest pain type",
-    }
     features = []
-    for feature, baseline_mean in baseline.items():
+    for feature in ("sys_bp", "tot_chol", "heart_rate", "bmi", "glucose"):
+        baseline_mean = TRAINING_MEANS[feature]
         values = [float(row.get(feature) or 0) for row in _requests if row.get(feature) is not None]
         current = sum(values) / len(values) if values else baseline_mean
         score = min(abs(current - baseline_mean) / max(abs(baseline_mean), 1), 0.35)
         features.append(
             {
-                "feature": labels[feature],
+                "feature": FEATURE_LABELS[feature],
                 "psi": round(score, 4),
                 "status": _drift_status_label(score, 0.2),
                 "tone": _drift_tone(score, 0.2),
@@ -1570,13 +1550,7 @@ def _model_comparison_rows(metrics: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _feature_label_for_admin(feature_name: str) -> str:
-    labels = {
-        "trestbps": "Resting BP",
-        "chol": "Cholesterol",
-        "thalach": "Max heart rate",
-        "cp": "Chest pain type",
-    }
-    return labels.get(feature_name, feature_name.replace("_", " ").title())
+    return FEATURE_LABELS.get(feature_name, feature_name.replace("_", " ").title())
 
 
 def _drift_tone(score: float, threshold: float) -> str:
@@ -1673,18 +1647,4 @@ def _default_error_trend() -> list[dict[str, Any]]:
 
 
 def _feature_keys() -> list[str]:
-    return [
-        "age",
-        "sex",
-        "cp",
-        "trestbps",
-        "chol",
-        "fbs",
-        "restecg",
-        "thalach",
-        "exang",
-        "oldpeak",
-        "slope",
-        "ca",
-        "thal",
-    ]
+    return FEATURE_COLUMNS

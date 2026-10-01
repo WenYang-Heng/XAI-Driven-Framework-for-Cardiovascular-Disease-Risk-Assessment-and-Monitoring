@@ -1,8 +1,8 @@
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from app.models import ActivityLogResponse, AdminMonitoringResponse, AdminSummaryResponse
-from app.services import ml_client, storage
+from app.models import ActivityLogResponse, AdminMonitoringResponse, AdminSummaryResponse, DefaultModelRequest
+from app.services import clinical, ml_client, storage
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -35,3 +35,18 @@ def get_activity_logs(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> dict:
     return {"success": True, **storage.activity_logs(page, page_size, search, sort_order)}
+
+
+@router.get("/models")
+def get_models() -> dict:
+    return {"success": True, "items": clinical.list_models(), "default_model": clinical.default_model_name()}
+
+
+@router.put("/models/default")
+async def set_default_model(request: DefaultModelRequest) -> dict:
+    admin_id = str(request.admin_id) if request.admin_id else None
+    try:
+        model = await clinical.set_default_model(request.model_name, admin_id)
+    except clinical.NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"success": True, "model": model}

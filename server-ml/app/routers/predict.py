@@ -7,10 +7,18 @@ from app.schemas import (
     ModelMetricsListResponse,
     ModelMetricsResponse,
     ModelName,
+    ModelScoresResponse,
     RiskPredictionRequest,
     RiskPredictionResponse,
 )
-from app.services.risk_model import all_model_metrics, compute_global_shap, get_model_metrics, list_models, predict_risk
+from app.services.risk_model import (
+    all_model_metrics,
+    compute_global_shap,
+    get_model_metrics,
+    list_models,
+    predict_risk,
+    score_all_models,
+)
 
 
 router = APIRouter(tags=["prediction"])
@@ -19,6 +27,11 @@ router = APIRouter(tags=["prediction"])
 @router.post("/predict", response_model=RiskPredictionResponse)
 def predict(request: RiskPredictionRequest) -> RiskPredictionResponse:
     return predict_risk(request)
+
+
+@router.post("/predict/scores", response_model=ModelScoresResponse)
+def predict_scores(request: RiskPredictionRequest) -> ModelScoresResponse:
+    return score_all_models(request)
 
 
 @router.post("/explanations/global-shap", response_model=GlobalShapResponse)

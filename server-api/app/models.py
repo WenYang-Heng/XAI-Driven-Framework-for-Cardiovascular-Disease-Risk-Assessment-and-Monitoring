@@ -31,25 +31,29 @@ class PatientSummary(BaseModel):
     risk_level: RiskLevel = Field(..., examples=["moderate"])
 
 
-class PredictionRequest(BaseModel):
+class FraminghamFeatures(BaseModel):
+    sex: Literal[0, 1]
+    age: int = Field(..., ge=18, le=100)
+    current_smoker: Literal[0, 1]
+    cigs_per_day: float = Field(..., ge=0, le=100)
+    bp_meds: Literal[0, 1]
+    prevalent_stroke: Literal[0, 1]
+    prevalent_hyp: Literal[0, 1]
+    diabetes: Literal[0, 1]
+    tot_chol: float = Field(..., ge=80, le=700)
+    sys_bp: float = Field(..., ge=70, le=300)
+    dia_bp: float = Field(..., ge=40, le=160)
+    bmi: float = Field(..., ge=12, le=70)
+    heart_rate: float = Field(..., ge=30, le=200)
+    glucose: float = Field(..., ge=40, le=500)
+
+
+class PredictionRequest(FraminghamFeatures):
     user_id: UUID | None = None
     patient_reference_id: str | None = Field(None, max_length=64)
     assessment_date: date | None = None
     visit_label: str | None = Field(None, max_length=120)
     model_name: ModelName = Field("logistic_regression")
-    age: int = Field(..., ge=0, le=120)
-    sex: Literal[0, 1]
-    cp: Literal[1, 2, 3, 4]
-    trestbps: float = Field(..., gt=0)
-    chol: float = Field(..., gt=0)
-    fbs: Literal[0, 1]
-    restecg: Literal[0, 1, 2]
-    thalach: float = Field(..., gt=0)
-    exang: Literal[0, 1]
-    oldpeak: float = Field(..., ge=0)
-    slope: Literal[1, 2, 3]
-    ca: int = Field(..., ge=0, le=3)
-    thal: Literal[3, 6, 7]
 
 
 class FeatureContribution(BaseModel):
@@ -139,6 +143,14 @@ class ConfusionMatrix(BaseModel):
     true_positive: int = Field(..., ge=0)
 
 
+class CrossValidationMetrics(BaseModel):
+    folds: int
+    auc_roc_mean: float
+    auc_roc_std: float
+    brier_score_mean: float
+    brier_score_std: float
+
+
 class ModelMetricsResponse(BaseModel):
     model_name: ModelName
     accuracy: float = Field(..., ge=0, le=1)
@@ -147,6 +159,9 @@ class ModelMetricsResponse(BaseModel):
     specificity: float = Field(..., ge=0, le=1)
     f1_score: float = Field(..., ge=0, le=1)
     auc_roc: float = Field(..., ge=0, le=1)
+    brier_score: float | None = Field(None, ge=0, le=1)
+    decision_threshold: float | None = Field(None, ge=0, le=1)
+    cross_validation: CrossValidationMetrics | None = None
     confusion_matrix: ConfusionMatrix
 
 
@@ -397,18 +412,81 @@ class ActivityLogResponse(BaseModel):
     page_size: int = Field(..., ge=1, le=100)
 
 
-PREDICTION_FEATURES = [
-    "age",
-    "sex",
-    "cp",
-    "trestbps",
-    "chol",
-    "fbs",
-    "restecg",
-    "thalach",
-    "exang",
-    "oldpeak",
-    "slope",
-    "ca",
-    "thal",
-]
+# =========================
+# CLINICIAN WORKFLOW
+# =========================
+BinaryFlag = Literal[0, 1]
+DataSource = Literal["clinician", "clinician_verified", "lab", "self_reported", "imported"]
+MeasurementSource = Literal["clinician", "lab", "self_reported", "imported"]
+ClinicalAction = Literal["none", "lifestyle", "start_or_adjust_medication", "refer", "further_tests"]
+ReviewStatus = Literal["draft", "signed_off"]
+
+
+class PatientHistory(BaseModel):
+    sex: BinaryFlag | None = None
+    current_smoker: BinaryFlag | None = None
+    cigs_per_day: float | None = Field(None, ge=0, le=100)
+    bp_meds: BinaryFlag | None = None
+    prevalent_stroke: BinaryFlag | None = None
+    prevalent_hyp: BinaryFlag | None = None
+    diabetes: BinaryFlag | None = None
+
+
+class PatientProfileCreate(PatientHistory):
+    clinician_id: UUID
+    patient_reference_id: str | None = Field(None, max_length=64)
+    display_name: str | None = Field(None, max_length=120)
+    date_of_birth: date | None = None
+    history_source: DataSource = "clinician"
+
+
+class PatientProfileUpdate(PatientHistory):
+    clinician_id: UUID
+    display_name: str | None = Field(None, max_length=120)
+    date_of_birth: date | None = None
+    case_status: PatientCaseStatus | None = None
+    history_source: DataSource = "clinician"
+
+
+class MeasurementCreate(BaseModel):
+    recorded_by: UUID | None = None
+    measured_at: datetime | None = None
+    sys_bp: float | None = Field(None, ge=70, le=300)
+    dia_bp: float | None = Field(None, ge=40, le=160)
+    heart_rate: float | None = Field(None, ge=30, le=200)
+    height_cm: float | None = Field(None, ge=100, le=250)
+    weight_kg: float | None = Field(None, ge=25, le=300)
+    bmi: float | None = Field(None, ge=12, le=70)
+    tot_chol: float | None = Field(None, ge=80, le=700)
+    glucose: float | None = Field(None, ge=40, le=500)
+    source: MeasurementSource = "clinician"
+    notes: str | None = Field(None, max_length=1000)
+
+
+class AssessmentCreate(BaseModel):
+    clinician_id: UUID
+    # Today's readings; saved as a new measurement before the assessment runs.
+    measurement: MeasurementCreate | None = None
+    # History values the clinician confirmed or corrected during the visit.
+    history: PatientHistory | None = None
+    # Research mode only: otherwise the admin-selected default model is used.
+    model_name: ModelName | None = None
+    visit_label: str | None = Field(None, max_length=120)
+
+
+class ClinicalReviewRequest(BaseModel):
+    clinician_id: UUID
+    clinician_risk_level: RiskLevel | None = None
+    agreement_level: int | None = Field(None, ge=1, le=5)
+    is_clinically_acceptable: bool | None = None
+    confidence_level: int | None = Field(None, ge=1, le=5)
+    flagged_features: list[str] = Field(default_factory=list)
+    clinical_action: ClinicalAction | None = None
+    feedback_comment: str | None = Field(None, max_length=2000)
+    use_for_future_retraining: bool = False
+    sign_off: bool = False
+
+
+class DefaultModelRequest(BaseModel):
+    admin_id: UUID | None = None
+    model_name: ModelName

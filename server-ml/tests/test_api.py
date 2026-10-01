@@ -382,3 +382,20 @@ def test_explanation_flags_age_outside_training_range():
     explanation = _build_explanation(RiskPredictionRequest(**payload))
 
     assert any("extrapolation" in line for line in explanation)
+
+
+def test_predict_scores_returns_every_model():
+    payload = _prediction_payload()
+    payload.pop("model_name")
+
+    response = client.post("/predict/scores", json=payload)
+
+    assert response.status_code == 200
+    scores = response.json()["scores"]
+    assert {score["model_name"] for score in scores} == {
+        "xgboost",
+        "random_forest",
+        "neural_network",
+        "logistic_regression",
+    }
+    assert all(0 <= score["risk_score"] <= 1 for score in scores)

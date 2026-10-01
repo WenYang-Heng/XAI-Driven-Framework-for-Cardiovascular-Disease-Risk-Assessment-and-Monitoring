@@ -4,7 +4,8 @@ from typing import Any
 import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.models import BatchConfirmRequest, BatchPreviewRequest, ModelName, PREDICTION_FEATURES
+from app.features import coerce_features, validate_features
+from app.models import BatchConfirmRequest, BatchPreviewRequest, ModelName
 from app.services import ml_client, storage
 
 
@@ -111,7 +112,7 @@ async def confirm_batch_upload(upload_id: str, request: BatchConfirmRequest) -> 
         patient_case_id = None
         if 0 < result.row_number <= len(rows):
             request_payload = {
-                **{key: rows[result.row_number - 1][key] for key in PREDICTION_FEATURES},
+                **coerce_features(rows[result.row_number - 1]),
                 "user_id": request.user_id,
                 "model_name": request.model_name,
                 "patient_reference_id": patient_reference_id,
@@ -125,7 +126,7 @@ async def confirm_batch_upload(upload_id: str, request: BatchConfirmRequest) -> 
                 "risk_level": result.risk_level,
                 "explanation": result.explanation or [],
                 "xai": result.xai.model_dump(mode="json") if result.xai else None,
-                "model_version": result.model_version or f"uci-heart-{request.model_name}",
+                "model_version": result.model_version or f"framingham-chd10-{request.model_name}",
             }
             request_id, result_id, patient_case_id, saved_patient_reference_id = await storage.save_prediction(
                 request_payload,
@@ -255,34 +256,7 @@ def _patient_reference_for_row(
 
 
 def _validate_row(row: dict[str, Any]) -> list[str]:
-    errors = []
-    missing = [feature for feature in PREDICTION_FEATURES if row.get(feature) in (None, "")]
-    if missing:
-        errors.append(f"Missing required fields: {', '.join(missing)}")
-        return errors
-
-    ranges = {
-        "age": lambda value: float(value) > 0,
-        "sex": lambda value: int(value) in (0, 1),
-        "cp": lambda value: int(value) in (1, 2, 3, 4),
-        "trestbps": lambda value: float(value) > 0,
-        "chol": lambda value: float(value) > 0,
-        "fbs": lambda value: int(value) in (0, 1),
-        "restecg": lambda value: int(value) in (0, 1, 2),
-        "thalach": lambda value: float(value) > 0,
-        "exang": lambda value: int(value) in (0, 1),
-        "oldpeak": lambda value: float(value) >= 0,
-        "slope": lambda value: int(value) in (1, 2, 3),
-        "ca": lambda value: int(value) in (0, 1, 2, 3),
-        "thal": lambda value: int(value) in (3, 6, 7),
-    }
-    for feature, validator in ranges.items():
-        try:
-            if not validator(row[feature]):
-                errors.append(f"Invalid value for {feature}.")
-        except (TypeError, ValueError):
-            errors.append(f"Invalid value for {feature}.")
-    return errors
+    return validate_features(row)
 
 
 def _to_python(value: Any) -> Any:
