@@ -56,6 +56,11 @@ HIGH_RISK_THRESHOLD = 0.20
 
 # Age range covered by the Framingham extract; predictions outside it are extrapolations.
 TRAINING_AGE_RANGE = (32, 70)
+
+BACKGROUND_SAMPLE_SIZE = 100
+# "auto" = 2 * n_features + 2048 coalitions. Far fewer (e.g. 80) leaves some features at exactly 0
+# and makes values change between runs; "auto" costs ~0.1 s per patient for these models.
+LOCAL_SHAP_NSAMPLES = "auto"
 MODEL_ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "data" / "models"
 
 MODEL_INFOS = [
@@ -252,7 +257,7 @@ def compute_global_shap(model_name: ModelName) -> GlobalShapResponse:
         sample = _global_shap_sample(X)
         explainer, shap_input, explainer_type = _global_shap_explainer_and_input(model_name, model, sample)
         if explainer_type == "KernelExplainer":
-            raw_values = explainer.shap_values(shap_input, nsamples=80)
+            raw_values = explainer.shap_values(shap_input, nsamples=LOCAL_SHAP_NSAMPLES, l1_reg=False)
         else:
             raw_values = explainer.shap_values(shap_input)
         shap_values = _class_one_matrix(raw_values)
@@ -411,9 +416,11 @@ def _build_explanation(request: RiskPredictionRequest) -> list[str]:
 
 @lru_cache(maxsize=1)
 def _background_sample() -> pd.DataFrame:
+    # 100 rows keeps rare conditions (BP meds ~3%, diabetes ~3%, stroke ~0.6%) represented, so
+    # "average patient" baselines and LIME's feature statistics reflect the real population.
     X, _ = load_heart_disease_data()
     complete = X.dropna()
-    sample_size = min(40, len(complete))
+    sample_size = min(BACKGROUND_SAMPLE_SIZE, len(complete))
     return complete.sample(n=sample_size, random_state=42).reset_index(drop=True)
 
 
@@ -493,7 +500,10 @@ def _build_shap_explanation(
             base_value = _class_one_base_value(explainer.expected_value)
         else:
             explainer, base_value = _kernel_shap_explainer(model_name)
-            raw_values = explainer.shap_values(input_frame.to_numpy(dtype=float), nsamples=80)
+            # l1_reg=False: SHAP's default feature selection would force small contributions to exactly 0.
+            raw_values = explainer.shap_values(
+                input_frame.to_numpy(dtype=float), nsamples=LOCAL_SHAP_NSAMPLES, l1_reg=False
+            )
             shap_values = _class_one_values(raw_values)
     except Exception:
         return _fallback_shap_explanation(model, input_frame, risk_score)
@@ -577,13 +587,9 @@ def _global_shap_explainer_and_input(model_name: ModelName, model: Any, sample: 
         )
         return explainer, shap_input, "TreeExplainer"
 
-    if model_name == "logistic_regression":
-        imputed = model.named_steps["imputer"].transform(sample)
-        shap_input = model.named_steps["scaler"].transform(imputed)
-        explainer = shap.LinearExplainer(model.named_steps["classifier"], shap_input)
-        return explainer, shap_input, "LinearExplainer"
-
-    if model_name == "neural_network":
+    # LinearExplainer would report logistic regression in log-odds; KernelExplainer keeps every
+    # model's global SHAP in probability units, matching the per-patient explanations.
+    if model_name in ("logistic_regression", "neural_network"):
         background = _background_sample()
 
         def predict_positive(data: Any) -> np.ndarray:

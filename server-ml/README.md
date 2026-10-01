@@ -138,6 +138,23 @@ Current results (test split, threshold 0.20):
 
 AUCs of about 0.70–0.73 match published results on this dataset. The much higher AUCs seen on the UCI Cleveland dataset come from diagnostic inputs (angiography, stress tests), not from better risk prediction.
 
+## How the Explanations Are Computed
+
+All SHAP values are in **probability units**: a value of `0.042` means that feature added about 4.2 percentage points to this patient's 10-year risk compared with the average patient. Contributions plus the base value add up to the predicted risk.
+
+| Model | Per-patient SHAP | Global SHAP |
+| --- | --- | --- |
+| `random_forest`, `xgboost` | `TreeExplainer` (interventional, probability output) | `TreeExplainer` |
+| `logistic_regression`, `neural_network` | `KernelExplainer`, `nsamples="auto"`, `l1_reg=False` | `KernelExplainer`, same settings |
+
+- **Background:** 100 complete rows sampled with a fixed seed. An earlier 40-row sample contained nobody on BP medication, with diabetes or with a previous stroke, so those features always showed exactly 0.
+- **Sampling:** `nsamples="auto"` (2 × 14 + 2048 feature combinations) keeps run-to-run variation below about 0.15 percentage points. With 80 samples, features were zeroed and values drifted between runs.
+- **`l1_reg=False`:** SHAP's default L1 feature selection activates when fewer than 20% of combinations are evaluated, and forces small contributions to exactly 0.
+- **Global SHAP for logistic regression:** uses `KernelExplainer` rather than `LinearExplainer`, because `LinearExplainer` reports log-odds and that would not be comparable with the per-patient explanations.
+- **Correlated features:** they share credit. For example, `cigs_per_day` carries most of the smoking effect, so `current_smoker` gets a value near 0.
+
+LIME uses the same 100-row background for its feature statistics.
+
 ## How the Risk Score Is Calculated
 
 The risk score is the model's predicted probability for class `1`.
