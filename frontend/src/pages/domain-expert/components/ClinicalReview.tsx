@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Lock, Scale } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Lock, Printer, Scale } from 'lucide-react';
 import type {
   AssessmentDetail,
   ClinicalAction,
@@ -17,6 +17,7 @@ import { Button } from '../../../components/ui/Button';
 import { Card, CardHeader } from '../../../components/ui/Card';
 import { ErrorBanner, LoadingCard, RiskBandLegend, RiskGauge, SelectField, SourceTag } from './Shared';
 import { TechnicalXai, deriveAgreement } from './Xai';
+import { WhatIfPanel } from './WhatIfPanel';
 
 export function ClinicalReview({
   clinicianId,
@@ -66,6 +67,12 @@ export function ClinicalReview({
 
   return (
     <div className="space-y-6">
+      <div className="hidden print:block">
+        <p className="text-lg font-bold">CardioXAI · 10-year coronary heart disease risk report</p>
+        <p className="text-xs text-slate-500">
+          Printed {formatDate(new Date().toISOString())}. Model estimate to support clinical judgement, not a diagnosis.
+        </p>
+      </div>
       <Card className="p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -83,9 +90,15 @@ export function ClinicalReview({
               {assessment.visit_label ? ` · ${assessment.visit_label}` : ""} · {modelLabels[assessment.model_name]}
             </p>
           </div>
-          {assessment.my_review?.review_status === "signed_off" ? (
-            <Badge tone="green"><Lock className="mr-1 h-3 w-3" />Signed off {formatDate(assessment.my_review.signed_off_at)}</Badge>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            {assessment.my_review?.review_status === "signed_off" ? (
+              <Badge tone="green"><Lock className="mr-1 h-3 w-3" />Signed off {formatDate(assessment.my_review.signed_off_at)}</Badge>
+            ) : null}
+            <Button variant="secondary" className="print:hidden" onClick={() => window.print()}>
+              <Printer className="h-4 w-4" />
+              Print report
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -147,6 +160,16 @@ export function ClinicalReview({
         </Card>
       </div>
 
+      {assessment.input_features && Object.keys(assessment.input_features).length === Object.keys(featureMeta).length ? (
+        <WhatIfPanel
+          clinicianId={clinicianId}
+          resultId={resultId}
+          baseline={assessment.input_features}
+          baselineRisk={assessment.risk_score}
+          baselineLevel={assessment.risk_level}
+        />
+      ) : null}
+
       <Card className="p-6">
         <CardHeader title="Inputs used" subtitle="The exact values sent to the model, and where each came from." />
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -172,7 +195,7 @@ export function ClinicalReview({
       />
 
       {assessment.xai ? (
-        <details className="rounded-[22px] border border-slate-200 bg-white p-6 shadow-soft">
+        <details className="rounded-[22px] border border-slate-200 bg-white p-6 shadow-soft print:hidden">
           <summary className="cursor-pointer text-base font-bold text-slate-950">Technical details: SHAP, LIME and their agreement</summary>
           <div className="mt-5">
             <TechnicalXai xai={assessment.xai} riskScore={assessment.risk_score} patientFeatureValues={patientValues} />
@@ -284,7 +307,7 @@ function VerdictForm({
     setFlagged((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]));
 
   return (
-    <Card className="p-6">
+    <Card className="p-6 print:hidden">
       <CardHeader
         title="Your verdict"
         subtitle="Your judgement is the final decision. Overrides and flagged drivers are reported to the model team to improve the model."

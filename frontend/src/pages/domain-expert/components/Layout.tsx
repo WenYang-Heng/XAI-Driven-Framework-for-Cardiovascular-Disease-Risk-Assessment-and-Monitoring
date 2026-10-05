@@ -14,7 +14,7 @@ export function Sidebar({
   const items = Object.entries(navMeta) as [NavKey, (typeof navMeta)[NavKey]][];
 
   return (
-    <aside className="hidden w-[260px] shrink-0 border-r border-slate-200 bg-white px-4 py-5 lg:block">
+    <aside className="hidden w-[260px] shrink-0 border-r border-slate-200 bg-white px-4 py-5 lg:block print:hidden">
       <div className="rounded-[22px] bg-slate-950 p-5 text-white">
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-400/20 text-cyan-200">
           <Activity className="h-6 w-6" />
@@ -51,7 +51,7 @@ export function Sidebar({
 /** Compact nav for screens narrower than the sidebar breakpoint. */
 export function MobileNav({ active, onChange }: { active: NavKey | null; onChange: (key: NavKey) => void }) {
   return (
-    <nav className="mb-4 flex gap-2 overflow-x-auto lg:hidden">
+    <nav className="mb-4 flex gap-2 overflow-x-auto lg:hidden print:hidden">
       {(Object.entries(navMeta) as [NavKey, (typeof navMeta)[NavKey]][]).map(([id, item]) => (
         <button
           key={id}
@@ -83,7 +83,7 @@ export function TopHeader({
   const displayName = currentUser?.fullName || currentUser?.email || "Signed-in user";
 
   return (
-    <header className="flex flex-col gap-4 rounded-[24px] border border-white bg-white/80 px-5 py-5 shadow-soft backdrop-blur lg:flex-row lg:items-center lg:justify-between">
+    <header className="print:hidden flex flex-col gap-4 rounded-[24px] border border-white bg-white/80 px-5 py-5 shadow-soft backdrop-blur lg:flex-row lg:items-center lg:justify-between">
       <div>
         {breadcrumb}
         <p className="flex items-center gap-2 text-sm font-semibold text-cyan-700">

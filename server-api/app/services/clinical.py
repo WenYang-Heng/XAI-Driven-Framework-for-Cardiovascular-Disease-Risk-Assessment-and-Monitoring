@@ -13,6 +13,7 @@ from app.features import (
     FEATURE_COLUMNS,
     HISTORY_FIELDS,
     MEASUREMENT_FIELDS,
+    MODIFIABLE_FIELDS,
     STALE_AFTER_DAYS,
     age_on,
     bmi_from,
@@ -497,6 +498,46 @@ def get_assessment(result_id: str, clinician_id: str | None = None) -> dict[str,
     reviews = storage.feedback_for_result(result_id)
     own_review = next((review for review in reviews if review.get("expert_id") == clinician_id), None) if clinician_id else None
     return {**assessment, "patient": patient, "reviews": reviews, "my_review": own_review}
+
+
+# =========================
+# WHAT-IF
+# =========================
+async def what_if(result_id: str, clinician_id: str, changes: dict[str, float]) -> dict[str, Any]:
+    """Re-score a saved assessment with modifiable inputs changed. Nothing is stored."""
+    assessment = get_assessment(result_id, clinician_id)
+    baseline = assessment.get("input_features") or {}
+    if set(baseline) != set(FEATURE_COLUMNS):
+        raise ValidationFailedError(["What-if is only available for Framingham assessments."])
+
+    not_modifiable = [feature for feature in changes if feature not in MODIFIABLE_FIELDS]
+    if not_modifiable:
+        raise ValidationFailedError([f"{feature} cannot be changed in a what-if." for feature in not_modifiable])
+
+    scenario = {**baseline, **changes}
+    # Quitting smoking means zero cigarettes; keep the pair consistent the same way the form does.
+    if float(scenario["current_smoker"]) == 0:
+        scenario["cigs_per_day"] = 0
+    errors = validate_features(scenario)
+    if errors:
+        raise ValidationFailedError(errors)
+
+    model_name = assessment["model_name"]
+    scores = await ml_client.predict_scores(coerce_features(scenario))
+    score = next((item for item in scores if item["model_name"] == model_name), None)
+    if score is None:
+        raise ValidationFailedError([f"Model {model_name} is not available for what-if scoring."])
+
+    return {
+        "result_id": result_id,
+        "model_name": model_name,
+        "baseline_risk": assessment["risk_score"],
+        "baseline_level": assessment["risk_level"],
+        "risk_score": score["risk_score"],
+        "risk_level": score["risk_level"],
+        "change": round(score["risk_score"] - float(assessment["risk_score"]), 4),
+        "scenario": coerce_features(scenario),
+    }
 
 
 # =========================

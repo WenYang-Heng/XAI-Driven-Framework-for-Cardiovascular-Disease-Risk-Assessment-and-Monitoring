@@ -77,6 +77,7 @@ Every request carries the clinician's user id (`clinician_id` in the body or que
 | `POST` | `/api/clinician/patients/{id}/assessments` | Save today's readings and confirmed history, run the default model, return prediction + model agreement |
 | `GET` | `/api/clinician/assessments/{result_id}?clinician_id=` | Assessment with inputs, XAI, patient and reviews |
 | `PUT` | `/api/clinician/assessments/{result_id}/review` | Save a draft verdict or sign off (`sign_off: true` requires `clinical_action`; signed-off reviews are locked) |
+| `POST` | `/api/clinician/assessments/{result_id}/what-if` | Re-score with modifiable inputs changed (`{"changes": {"sys_bp": 130, "current_smoker": 0}}`); uses the assessment's model and saves nothing |
 
 Staleness rules: vitals older than 90 days and labs older than 365 days are flagged.
 

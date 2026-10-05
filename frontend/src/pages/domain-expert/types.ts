@@ -302,3 +302,14 @@ export type PatientDetail = {
   measurements: Measurement[];
   assessments: AssessmentListItem[];
 };
+
+export type WhatIfResult = {
+  result_id: string;
+  model_name: ModelKey;
+  baseline_risk: number;
+  baseline_level: RiskLevel;
+  risk_score: number;
+  risk_level: RiskLevel;
+  change: number;
+  scenario: Record<FeatureKey, number>;
+};

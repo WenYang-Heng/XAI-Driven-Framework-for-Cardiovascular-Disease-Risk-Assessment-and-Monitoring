@@ -42,6 +42,9 @@ MEASUREMENT_FIELDS = VITAL_FIELDS + LAB_FIELDS
 # Readings older than this are flagged as stale when pre-filling an assessment.
 STALE_AFTER_DAYS = {**{field: 90 for field in VITAL_FIELDS}, **{field: 365 for field in LAB_FIELDS}}
 
+# Inputs a clinician can realistically change through treatment or lifestyle (used by what-if).
+MODIFIABLE_FIELDS = ["current_smoker", "cigs_per_day", "sys_bp", "dia_bp", "tot_chol", "bmi", "glucose", "heart_rate"]
+
 BINARY_FIELDS = {"sex", "current_smoker", "bp_meds", "prevalent_stroke", "prevalent_hyp", "diabetes"}
 
 # Inclusive numeric ranges; must match server-ml's RiskPredictionRequest.

@@ -487,6 +487,11 @@ class ClinicalReviewRequest(BaseModel):
     sign_off: bool = False
 
 
+class WhatIfRequest(BaseModel):
+    clinician_id: UUID
+    changes: dict[str, float] = Field(..., min_length=1)
+
+
 class DefaultModelRequest(BaseModel):
     admin_id: UUID | None = None
     model_name: ModelName

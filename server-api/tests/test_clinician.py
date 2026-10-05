@@ -311,3 +311,41 @@ def test_models_in_same_band_agree_even_with_wide_spread(monkeypatch):
     assert agreement["agrees"] is True
     assert agreement["spread"] == 0.18
     assert agreement["message"] is None
+
+
+def test_what_if_rescores_modifiable_changes_with_assessment_model(monkeypatch):
+    sent: list[dict] = []
+
+    async def scenario_scores(features: dict) -> list[dict]:
+        sent.append(features)
+        return [{"model_name": "logistic_regression", "risk_score": 0.15, "risk_level": "moderate"}]
+
+    patient = _create_patient()
+    result_id = _assess(patient["patient_case_id"])["result_id"]
+    monkeypatch.setattr(ml_client, "predict_scores", scenario_scores)
+
+    response = client.post(
+        f"/api/clinician/assessments/{result_id}/what-if",
+        json={"clinician_id": CLINICIAN, "changes": {"current_smoker": 0, "sys_bp": 130}},
+    )
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["baseline_risk"] == 0.24
+    assert body["risk_level"] == "moderate"
+    assert body["change"] == -0.09
+    assert sent[0]["cigs_per_day"] == 0
+    assert sent[0]["sys_bp"] == 130
+    assert len(storage._results) == 1
+
+
+def test_what_if_rejects_non_modifiable_inputs():
+    patient = _create_patient()
+    result_id = _assess(patient["patient_case_id"])["result_id"]
+
+    response = client.post(
+        f"/api/clinician/assessments/{result_id}/what-if",
+        json={"clinician_id": CLINICIAN, "changes": {"age": 40}},
+    )
+
+    assert response.status_code == 422

@@ -4,7 +4,14 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Query
 
-from app.models import AssessmentCreate, ClinicalReviewRequest, MeasurementCreate, PatientProfileCreate, PatientProfileUpdate
+from app.models import (
+    AssessmentCreate,
+    ClinicalReviewRequest,
+    MeasurementCreate,
+    PatientProfileCreate,
+    PatientProfileUpdate,
+    WhatIfRequest,
+)
 from app.services import clinical
 
 
@@ -95,3 +102,9 @@ async def get_assessment(result_id: str, clinician_id: str = Query(...)) -> dict
 async def review_assessment(result_id: str, request: ClinicalReviewRequest) -> dict:
     review = await _handle(lambda: clinical.review_assessment(result_id, request.model_dump(mode="json")))
     return {"success": True, "review": review}
+
+
+@router.post("/assessments/{result_id}/what-if")
+async def what_if(result_id: str, request: WhatIfRequest) -> dict:
+    result = await _handle(lambda: clinical.what_if(result_id, str(request.clinician_id), request.changes))
+    return {"success": True, **result}

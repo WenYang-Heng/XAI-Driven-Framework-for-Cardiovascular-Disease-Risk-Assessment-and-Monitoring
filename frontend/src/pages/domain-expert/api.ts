@@ -2,6 +2,7 @@ import { API_BASE_URL } from "./constants";
 import type {
   AssessmentDetail,
   AssessmentRunResponse,
+  FeatureKey,
   GlobalShapExplanation,
   HistoryKey,
   MeasurementInput,
@@ -14,6 +15,7 @@ import type {
   Prefill,
   Review,
   ReviewInput,
+  WhatIfResult,
   Worklist,
 } from "./types";
 
@@ -103,6 +105,12 @@ export const clinicianApi = {
     request<{ assessment: AssessmentDetail }>(
       `/api/clinician/assessments/${resultId}?${query({ clinician_id: clinicianId })}`,
     ).then((body) => body.assessment),
+
+  whatIf: (clinicianId: string, resultId: string, changes: Partial<Record<FeatureKey, number>>) =>
+    request<WhatIfResult>(`/api/clinician/assessments/${resultId}/what-if`, {
+      method: "POST",
+      body: JSON.stringify({ clinician_id: clinicianId, changes }),
+    }),
 
   review: (clinicianId: string, resultId: string, payload: ReviewInput) =>
     request<{ review: Review }>(`/api/clinician/assessments/${resultId}/review`, {
