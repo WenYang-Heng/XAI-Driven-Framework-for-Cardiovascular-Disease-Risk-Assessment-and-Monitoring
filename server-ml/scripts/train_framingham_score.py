@@ -24,11 +24,10 @@ import pandas as pd
 from fasterrisk.fasterrisk import RiskScoreClassifier, RiskScoreOptimizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from app.services.framingham_dataset import CANDIDATE_RULES, binarize, load_framingham_data
+from app.services.framingham_dataset import CANDIDATE_RULES, binarize, framingham_train_test_split
 from app.services.framingham_score import SCORE_CARD_PATH, print_score_card
 
 
@@ -88,12 +87,11 @@ def main() -> None:
     parser.add_argument("--sweep", action="store_true", help="print test AUC for card sizes 3..10 first")
     args = parser.parse_args()
 
-    X, y = load_framingham_data()
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+    X_train, X_test, y_train, y_test = framingham_train_test_split()
     B_train, B_test = binarize(X_train), binarize(X_test)
 
     baseline_auc = logistic_regression_baseline_auc(X_train, y_train, X_test, y_test)
-    print(f"Logistic regression baseline (all {X.shape[1]} raw inputs): test AUC = {baseline_auc}\n")
+    print(f"Logistic regression baseline (all {X_train.shape[1]} raw inputs): test AUC = {baseline_auc}\n")
 
     if args.sweep:
         print("items  train AUC  test AUC")
@@ -109,7 +107,7 @@ def main() -> None:
         "baseline_logistic_regression_test_auc": baseline_auc,
         "test_size": len(y_test),
     }
-    card = build_score_card(model, metrics, rows=len(X))
+    card = build_score_card(model, metrics, rows=len(X_train) + len(X_test))
 
     SCORE_CARD_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCORE_CARD_PATH.write_text(json.dumps(card, indent=2) + "\n")

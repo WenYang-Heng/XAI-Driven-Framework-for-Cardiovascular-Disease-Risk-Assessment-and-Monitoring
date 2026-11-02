@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 import pandas as pd
+from sklearn.model_selection import train_test_split
 
 
 DATASET_URL = "https://raw.githubusercontent.com/GauravPadawe/Framingham-Heart-Study/master/framingham.csv"
@@ -97,6 +98,13 @@ def load_framingham_data() -> tuple[pd.DataFrame, pd.Series]:
     X = data[INPUT_COLUMNS].astype(float).reset_index(drop=True)
     y = data[TARGET_COLUMN].astype(int).reset_index(drop=True)
     return X, y
+
+
+@lru_cache(maxsize=1)
+def framingham_train_test_split() -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """The one 80/20 split every Framingham model is trained and tested on."""
+    X, y = load_framingham_data()
+    return train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
 
 
 def binarize(X: pd.DataFrame, rules: list[Rule] = CANDIDATE_RULES) -> pd.DataFrame:

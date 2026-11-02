@@ -44,6 +44,12 @@ def points_to_risk(total_points: int, card: dict) -> float:
     return 1 / (1 + math.exp(-(card["intercept"] + total_points) / card["multiplier"]))
 
 
+def card_risks(X, card: dict):
+    """Score many patients at once (X is a DataFrame of raw inputs)."""
+    total_points = sum(item["points"] * (X[item["field"]] >= item["threshold"]) for item in card["items"])
+    return 1 / (1 + (-(card["intercept"] + total_points) / card["multiplier"]).map(math.exp))
+
+
 def risk_level(risk: float) -> str:
     if risk < LOW_RISK_BELOW:
         return "low"

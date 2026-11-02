@@ -286,3 +286,31 @@ class FraminghamRiskResponse(BaseModel):
     risk: float = Field(..., ge=0, le=1, description="Estimated 10-year CHD risk")
     risk_level: Literal["low", "moderate", "high"]
     breakdown: list[ScoreCardLine]
+
+
+FraminghamModelName = Literal["xgboost", "random_forest", "neural_network", "logistic_regression"]
+
+
+class FraminghamModelPredictionRequest(FraminghamRiskRequest):
+    """Same inputs as the score card, but the ML models need all of them."""
+
+    model_name: FraminghamModelName = Field("xgboost", description="ML model to use for prediction")
+
+
+class FraminghamModelPredictionResponse(BaseModel):
+    model_name: FraminghamModelName
+    risk: float = Field(..., ge=0, le=1, description="Estimated 10-year CHD risk")
+    risk_level: Literal["low", "moderate", "high"]
+    shap: ShapExplanation
+    lime: LimeExplanation
+
+
+class FraminghamModelMetrics(BaseModel):
+    model_name: str
+    train_auc: float
+    test_auc: float
+    test_brier_score: float = Field(..., description="Mean squared error of the predicted risk; lower is better")
+
+
+class FraminghamModelMetricsListResponse(BaseModel):
+    metrics: list[FraminghamModelMetrics]

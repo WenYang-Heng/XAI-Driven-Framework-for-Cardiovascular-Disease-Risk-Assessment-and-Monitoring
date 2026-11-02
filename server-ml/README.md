@@ -388,3 +388,32 @@ Only the inputs used by the current card are required. Others can be omitted.
 POST /framingham/predict
 { "male": 1, "age": 58, "cigsPerDay": 15, "prevalentHyp": 1, "glucose": 90 }
 ```
+
+## Framingham ML Models with SHAP and LIME
+
+To compare black-box models with the FasterRisk card fairly, the same four models (XGBoost, Random Forest, Neural Network, Logistic Regression) are also trained on Framingham. They use the same 14 inputs and the same train/test split as the card. They are trained **without class weighting**, so their outputs stay realistic risk probabilities.
+
+| File | Purpose |
+| --- | --- |
+| `app/services/framingham_models.py` | Builds, trains, caches (`data/models/framingham/*.pkl`) and evaluates the models |
+| `app/services/framingham_xai.py` | SHAP (TreeExplainer for tree models, KernelExplainer otherwise) and LIME for each prediction |
+| `scripts/compare_framingham_models.py` | Prints the comparison tables below |
+
+### Endpoints
+
+- `POST /framingham/models/predict`: risk, risk level, `shap` and `lime` in the same format as the UCI `/predict` endpoint. Needs all 14 inputs plus `model_name`.
+- `GET /framingham/models/metrics`: train/test AUC and Brier score for the four models and the FasterRisk card
+
+### Results (`python scripts/compare_framingham_models.py`)
+
+| Model | Train AUC | Test AUC | Brier |
+| --- | --- | --- | --- |
+| XGBoost | 0.849 | 0.664 | 0.128 |
+| Random Forest | 0.820 | 0.683 | 0.123 |
+| Neural Network | 0.750 | 0.688 | 0.123 |
+| Logistic Regression | 0.748 | 0.700 | 0.122 |
+| **FasterRisk card (6 lines)** | 0.733 | 0.687 | 0.125 |
+
+Global SHAP: every black-box model ranks **age, systolic BP, sex and cigarettes per day** among its top 5 inputs. 3 to 4 of each model's top 5 are also on the FasterRisk card. The card picked *diagnosed hypertension* instead of systolic BP; the two carry overlapping information.
+
+SHAP vs LIME agree on 3.0 to 3.6 of each patient's top 5 drivers on average.
