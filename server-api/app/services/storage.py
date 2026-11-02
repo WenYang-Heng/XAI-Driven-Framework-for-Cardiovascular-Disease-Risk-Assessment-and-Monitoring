@@ -137,13 +137,20 @@ def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
     return serialized
 
 
-async def log_activity(user_id: str | None, action: str, entity_type: str | None = None, entity_id: str | None = None) -> None:
+async def log_activity(
+    user_id: str | None,
+    action: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
     payload = {
         "log_id": str(uuid4()),
         "user_id": user_id,
         "action": action,
         "entity_type": entity_type,
         "entity_id": entity_id,
+        "metadata": metadata,
         "created_at": _now(),
     }
     _activity_logs.append(payload)
@@ -255,8 +262,26 @@ async def save_model_metric_snapshot(metrics: dict[str, Any]) -> dict[str, Any]:
         "created_at": _now(),
     }
 
+    previous = next((row for row in latest_model_metric_snapshots() if row["model_name"] == model_name), None)
+    if previous and not _metrics_changed(previous, payload):
+        return previous
+
     _model_metric_snapshots.append(payload)
     return await _insert("model_metric_snapshots", payload)
+
+
+SNAPSHOT_COMPARE_KEYS = ("model_version", "accuracy", "precision", "sensitivity_recall", "specificity", "f1_score", "auc_roc")
+
+
+def _metrics_changed(previous: dict[str, Any], current: dict[str, Any]) -> bool:
+    """One snapshot per model per day unless the metrics actually move."""
+    if _local_day(previous.get("created_at")) != _local_day(current["created_at"]):
+        return True
+    return any(
+        str(previous.get(key)) != str(current.get(key)) if key == "model_version"
+        else abs(float(previous.get(key) or 0) - float(current.get(key) or 0)) > 1e-6
+        for key in SNAPSHOT_COMPARE_KEYS
+    )
 
 
 async def get_global_shap_explanation(model_name: str) -> dict[str, Any] | None:
@@ -912,18 +937,290 @@ def upload_detail(upload_id: str) -> list[dict[str, Any]]:
     return [row for row in _batch_rows if row.get("upload_id") == upload_id]
 
 
-def admin_summary() -> dict[str, Any]:
-    usage = Counter(result["model_name"] for result in _results)
-    users = {result.get("user_id") for result in _results if result.get("user_id")}
-    users.update(upload.get("user_id") for upload in _uploads if upload.get("user_id"))
+# --- Admin monitoring -------------------------------------------------------
+
+REPORTING_TIMEZONE = "Asia/Kuala_Lumpur"
+
+# Activity categories map to action-name fragments so the same filter works for
+# the database (ILIKE) and the in-memory store.
+ACTIVITY_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "auth": ("LOGIN", "LOGOUT"),
+    "assessment": ("PREDICTION",),
+    "batch": ("BATCH", "UPLOAD"),
+    "feedback": ("FEEDBACK",),
+    "patient": ("PATIENT",),
+    "report": ("REPORT",),
+}
+ACTIVITY_STATUS_PATTERNS: dict[str, tuple[str, ...]] = {
+    "failed": ("FAIL", "ERROR"),
+    "warning": ("PREVIEW", "RETRY", "DENIED"),
+}
+
+
+def _local_day(value: Any) -> date | None:
+    from zoneinfo import ZoneInfo
+
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(ZoneInfo(REPORTING_TIMEZONE)).date()
+
+
+def _range_start(days: int) -> date:
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo(REPORTING_TIMEZONE)).date() - timedelta(days=days - 1)
+
+
+def _day_series(days: int) -> list[str]:
+    start = _range_start(days)
+    return [(start + timedelta(days=offset)).isoformat() for offset in range(days)]
+
+
+def _range_params(days: int) -> dict[str, Any]:
+    return {"tz": REPORTING_TIMEZONE, "start_day": _range_start(days)}
+
+
+RANGE_FILTER = "(created_at at time zone %(tz)s)::date >= %(start_day)s"
+
+
+def admin_overview(days: int) -> dict[str, Any]:
+    rows = _overview_rows(days)
+    risk_counts = Counter(row["risk_level"] for row in rows)
+    daily: dict[str, Counter] = {day: Counter() for day in _day_series(days)}
+    for row in rows:
+        day = str(row["day"])
+        if day in daily:
+            daily[day][row["risk_level"]] += 1
+
+    totals = _overview_totals(days)
     return {
-        "total_users": len(users),
-        "total_predictions": len(_results),
-        "total_uploads": len(_uploads),
-        "successful_batch_rows": sum(1 for row in _batch_rows if row["status"] == "success"),
-        "failed_batch_rows": sum(1 for row in _batch_rows if row["status"] == "failed"),
-        "model_usage": [{"model_name": model_name, "count": count} for model_name, count in usage.items()],
+        "days": days,
+        "totals": {
+            **totals,
+            "assessments": len(rows),
+            "high_risk": risk_counts.get("high", 0),
+            "active_users": len({row["user_id"] for row in rows if row.get("user_id")}),
+            "single_assessments": sum(1 for row in rows if row.get("entry_type") != "batch"),
+            "batch_assessments": sum(1 for row in rows if row.get("entry_type") == "batch"),
+        },
+        "risk_distribution": [
+            {"risk_level": level, "count": risk_counts.get(level, 0)} for level in ("low", "moderate", "high")
+        ],
+        "daily": [
+            {
+                "day": day,
+                "total": sum(counts.values()),
+                "low": counts.get("low", 0),
+                "moderate": counts.get("moderate", 0),
+                "high": counts.get("high", 0),
+            }
+            for day, counts in daily.items()
+        ],
+        "model_usage": [
+            {"model_name": name, "count": count}
+            for name, count in Counter(row["model_name"] for row in rows).most_common()
+        ],
     }
+
+
+def _overview_rows(days: int) -> list[dict[str, Any]]:
+    if database_enabled():
+        return _query_database(
+            f"""
+            select
+              pr.user_id::text as user_id,
+              pr.model_name,
+              pr.risk_level,
+              coalesce(req.entry_type, 'single') as entry_type,
+              (pr.created_at at time zone %(tz)s)::date::text as day
+            from public.prediction_results pr
+            left join public.prediction_requests req on req.request_id = pr.request_id
+            where {RANGE_FILTER.replace("created_at", "pr.created_at")}
+            """,
+            _range_params(days),
+        )
+
+    start = _range_start(days)
+    request_by_id = {request["request_id"]: request for request in _requests}
+    rows = []
+    for result in _results:
+        day = _local_day(result.get("created_at"))
+        if day and day >= start:
+            request = request_by_id.get(result["request_id"], {})
+            rows.append(
+                {
+                    "user_id": result.get("user_id"),
+                    "model_name": result["model_name"],
+                    "risk_level": result["risk_level"],
+                    "entry_type": request.get("entry_type", "single"),
+                    "day": day.isoformat(),
+                }
+            )
+    return rows
+
+
+def _overview_totals(days: int) -> dict[str, int]:
+    if database_enabled():
+        rows = _query_database(
+            f"""
+            select
+              (select count(*) from public.prediction_results)::int as all_time_assessments,
+              (select count(*) from public.user_profiles)::int as registered_users,
+              (select count(*) from public.domain_expert_feedback where {RANGE_FILTER})::int as feedback,
+              (select count(*) from public.uploaded_files where {RANGE_FILTER})::int as batch_uploads,
+              (select count(*) from public.batch_prediction_rows where status = 'failed' and {RANGE_FILTER})::int as failed_batch_rows
+            """,
+            _range_params(days),
+        )
+        return {key: int(value or 0) for key, value in (rows[0] if rows else {}).items()}
+
+    start = _range_start(days)
+
+    def in_range(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [item for item in items if (_local_day(item.get("created_at")) or date.min) >= start]
+
+    return {
+        "all_time_assessments": len(_results),
+        "registered_users": len(_profiles),
+        "feedback": len(in_range(_feedback)),
+        "batch_uploads": len(in_range(_uploads)),
+        "failed_batch_rows": sum(1 for row in in_range(_batch_rows) if row.get("status") == "failed"),
+    }
+
+
+def assessment_inputs(days: int) -> list[dict[str, Any]]:
+    """Clinical inputs of assessments made in the range, for drift and parity checks."""
+    features = _feature_keys()
+    if database_enabled():
+        return _query_database(
+            f"""
+            select
+              {", ".join(f"req.{feature}" for feature in features)},
+              (req.created_at at time zone %(tz)s)::date::text as day,
+              res.risk_level,
+              res.predicted_class
+            from public.prediction_requests req
+            left join public.prediction_results res on res.request_id = req.request_id
+            where {RANGE_FILTER.replace("created_at", "req.created_at")}
+            """,
+            _range_params(days),
+        )
+
+    start = _range_start(days)
+    result_by_request = {result["request_id"]: result for result in _results}
+    rows = []
+    for request in _requests:
+        day = _local_day(request.get("created_at"))
+        if day and day >= start:
+            result = result_by_request.get(request["request_id"], {})
+            rows.append(
+                {
+                    **{feature: request.get(feature) for feature in features},
+                    "day": day.isoformat(),
+                    "risk_level": result.get("risk_level"),
+                    "predicted_class": result.get("predicted_class"),
+                }
+            )
+    return rows
+
+
+def live_prediction_parity(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """High-risk rate by subgroup over real assessments (no ground truth available)."""
+    groups = {
+        "sex": [("Female", lambda row: row["sex"] == 0), ("Male", lambda row: row["sex"] == 1)],
+        "age_group": [
+            ("Under 50", lambda row: row["age"] < 50),
+            ("50-64", lambda row: 50 <= row["age"] < 65),
+            ("65 and over", lambda row: row["age"] >= 65),
+        ],
+        "fasting_blood_sugar": [
+            ("Normal (<= 120 mg/dl)", lambda row: row["fbs"] == 0),
+            ("Elevated (> 120 mg/dl)", lambda row: row["fbs"] == 1),
+        ],
+    }
+    scored = [
+        {**row, "age": float(row["age"]), "sex": int(row["sex"]), "fbs": int(row["fbs"])}
+        for row in rows
+        if row.get("risk_level") and row.get("age") is not None
+    ]
+    parity = []
+    for attribute, definitions in groups.items():
+        for name, predicate in definitions:
+            members = [row for row in scored if predicate(row)]
+            parity.append(
+                {
+                    "attribute": attribute,
+                    "group": name,
+                    "assessments": len(members),
+                    "high_risk_rate": round(sum(1 for row in members if row["risk_level"] == "high") / len(members), 4)
+                    if members
+                    else None,
+                    "positive_rate": round(sum(1 for row in members if int(row.get("predicted_class") or 0) == 1) / len(members), 4)
+                    if members
+                    else None,
+                }
+            )
+    return parity
+
+
+def model_metric_history(days: int, model_name: str | None = None) -> list[dict[str, Any]]:
+    if database_enabled():
+        model_filter = "and model_name = %(model_name)s" if model_name else ""
+        return _query_database(
+            f"""
+            select distinct on (model_name, (created_at at time zone %(tz)s)::date)
+              model_name,
+              model_version,
+              (created_at at time zone %(tz)s)::date::text as day,
+              accuracy, precision, sensitivity_recall, specificity, f1_score, auc_roc
+            from public.model_metric_snapshots
+            where {RANGE_FILTER} {model_filter}
+            order by model_name, (created_at at time zone %(tz)s)::date, created_at desc
+            """,
+            {**_range_params(days), "model_name": model_name},
+        )
+
+    start = _range_start(days)
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for snapshot in sorted(_model_metric_snapshots, key=lambda item: item["created_at"]):
+        day = _local_day(snapshot["created_at"])
+        if day and day >= start and (not model_name or snapshot["model_name"] == model_name):
+            latest[(snapshot["model_name"], day.isoformat())] = {**snapshot, "day": day.isoformat()}
+    return list(latest.values())
+
+
+def latest_model_metric_snapshots() -> list[dict[str, Any]]:
+    if database_enabled():
+        return _query_database(
+            """
+            select distinct on (model_name)
+              model_name, model_version, accuracy, precision, sensitivity_recall,
+              specificity, f1_score, auc_roc, true_negative, false_positive,
+              false_negative, true_positive, created_at
+            from public.model_metric_snapshots
+            order by model_name, created_at desc
+            """
+        )
+
+    latest: dict[str, dict[str, Any]] = {}
+    for snapshot in sorted(_model_metric_snapshots, key=lambda item: item["created_at"]):
+        latest[snapshot["model_name"]] = snapshot
+    return list(latest.values())
+
+
+def _pattern_clause(column: str, patterns: tuple[str, ...], prefix: str, params: dict[str, Any]) -> str:
+    clauses = []
+    for index, pattern in enumerate(patterns):
+        key = f"{prefix}_{index}"
+        params[key] = f"%{pattern}%"
+        clauses.append(f"{column} ilike %({key})s")
+    return "(" + " or ".join(clauses) + ")"
 
 
 def activity_logs(
@@ -931,6 +1228,9 @@ def activity_logs(
     page_size: int = 10,
     search: str = "",
     sort_order: str = "desc",
+    category: str | None = None,
+    status: str | None = None,
+    days: int | None = None,
 ) -> dict[str, Any]:
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
@@ -939,34 +1239,45 @@ def activity_logs(
     clean_sort = "asc" if sort_order == "asc" else "desc"
 
     if database_enabled():
-        where_clause = ""
-        params: dict[str, Any] = {"limit": page_size, "offset": offset}
+        params: dict[str, Any] = {"limit": page_size, "offset": offset, "tz": REPORTING_TIMEZONE}
+        conditions = []
         if clean_search:
             params["search"] = f"%{clean_search}%"
-            where_clause = """
-            where
-              coalesce(user_id::text, '') ilike %(search)s
-              or coalesce(action, '') ilike %(search)s
-              or coalesce(entity_type, '') ilike %(search)s
-              or coalesce(entity_id::text, '') ilike %(search)s
-            """
+            conditions.append(
+                """(
+                  coalesce(log.user_id::text, '') ilike %(search)s
+                  or coalesce(profile.email, '') ilike %(search)s
+                  or coalesce(profile.full_name, '') ilike %(search)s
+                  or log.action ilike %(search)s
+                  or coalesce(log.entity_type, '') ilike %(search)s
+                  or coalesce(log.entity_id::text, '') ilike %(search)s
+                )"""
+            )
+        if category in ACTIVITY_CATEGORIES:
+            conditions.append(_pattern_clause("log.action", ACTIVITY_CATEGORIES[category], "category", params))
+        if status in ACTIVITY_STATUS_PATTERNS:
+            conditions.append(_pattern_clause("log.action", ACTIVITY_STATUS_PATTERNS[status], "status", params))
+        elif status == "success":
+            failed_or_warning = ACTIVITY_STATUS_PATTERNS["failed"] + ACTIVITY_STATUS_PATTERNS["warning"]
+            conditions.append("not " + _pattern_clause("log.action", failed_or_warning, "status", params))
+        if days:
+            params["start_day"] = _range_start(days)
+            conditions.append("(log.created_at at time zone %(tz)s)::date >= %(start_day)s")
+        where_clause = f"where {' and '.join(conditions)}" if conditions else ""
+        source = """
+            from public.activity_logs log
+            left join public.user_profiles profile on profile.user_id = log.user_id
+        """
 
-        count_rows = _query_database(
-            f"select count(*)::int as total from public.activity_logs {where_clause}",
-            params,
-        )
+        count_rows = _query_database(f"select count(*)::int as total {source} {where_clause}", params)
         rows = _query_database(
             f"""
             select
-              log_id,
-              created_at,
-              user_id,
-              action,
-              entity_type,
-              entity_id
-            from public.activity_logs
+              log.log_id, log.created_at, log.user_id, log.action, log.entity_type,
+              log.entity_id, log.metadata, profile.email, profile.full_name, profile.role
+            {source}
             {where_clause}
-            order by created_at {clean_sort}
+            order by log.created_at {clean_sort}
             limit %(limit)s offset %(offset)s
             """,
             params,
@@ -978,7 +1289,11 @@ def activity_logs(
             "page_size": page_size,
         }
 
-    items = [_activity_log_item(row) for row in _activity_logs]
+    profiles = {profile["user_id"]: profile for profile in _profiles}
+    items = [
+        _activity_log_item({**row, **{key: profiles.get(row.get("user_id"), {}).get(key) for key in ("email", "full_name", "role")}})
+        for row in _activity_logs
+    ]
     if clean_search:
         needle = clean_search.lower()
         items = [
@@ -986,705 +1301,54 @@ def activity_logs(
             for item in items
             if needle
             in " ".join(
-                str(value or "")
-                for value in (
-                    item.get("actor"),
-                    item.get("event_type"),
-                    item.get("action"),
-                    item.get("entity_type"),
-                    item.get("entity_id"),
-                    item.get("status"),
-                )
+                str(item.get(key) or "")
+                for key in ("actor", "actor_name", "actor_email", "action", "entity_type", "entity_id", "status")
             ).lower()
         ]
+    if category in ACTIVITY_CATEGORIES:
+        items = [item for item in items if item["category"] == category]
+    if status:
+        items = [item for item in items if item["status"] == status]
+    if days:
+        start = _range_start(days)
+        items = [item for item in items if (_local_day(item["timestamp"]) or date.min) >= start]
 
-    reverse = clean_sort == "desc"
-    items = sorted(items, key=lambda item: str(item.get("timestamp") or ""), reverse=reverse)
-    total = len(items)
+    items = sorted(items, key=lambda item: str(item.get("timestamp") or ""), reverse=clean_sort == "desc")
     return {
         "items": items[offset : offset + page_size],
-        "total": total,
+        "total": len(items),
         "page": page,
         "page_size": page_size,
     }
 
 
-def admin_monitoring_dashboard(model_metrics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    if database_enabled():
-        return _database_admin_monitoring_dashboard(model_metrics)
-
-    performance = _memory_performance_monitoring(model_metrics)
-    fairness = _memory_fairness_monitoring()
-    drift = _memory_drift_monitoring()
-    errors = _memory_error_monitoring()
-
-    return {
-        "summary": admin_summary(),
-        "performance": performance,
-        "fairness": fairness,
-        "drift": drift,
-        "errors": errors,
-        "last_updated": _now(),
-    }
-
-
-def _database_admin_monitoring_dashboard(model_metrics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    return {
-        "summary": _database_admin_summary(),
-        "performance": _database_performance_monitoring(model_metrics),
-        "fairness": _database_fairness_monitoring(),
-        "drift": _database_drift_monitoring(),
-        "errors": _database_error_monitoring(),
-        "last_updated": _now(),
-    }
-
-
-def _database_admin_summary() -> dict[str, Any]:
-    rows = _query_database(
-        """
-        select
-          (select count(*) from public.user_profiles) as total_users,
-          (select count(*) from public.prediction_results) as total_predictions,
-          (select count(*) from public.uploaded_files) as total_uploads,
-          (select count(*) from public.batch_prediction_rows where status = 'success') as successful_batch_rows,
-          (select count(*) from public.batch_prediction_rows where status = 'failed') as failed_batch_rows
-        """
-    )
-    usage = _query_database(
-        """
-        select model_name, count(*)::int as count
-        from public.prediction_results
-        group by model_name
-        order by count desc
-        """
-    )
-    summary = rows[0] if rows else {}
-    return {
-        "total_users": int(summary.get("total_users", 0) or 0),
-        "total_predictions": int(summary.get("total_predictions", 0) or 0),
-        "total_uploads": int(summary.get("total_uploads", 0) or 0),
-        "successful_batch_rows": int(summary.get("successful_batch_rows", 0) or 0),
-        "failed_batch_rows": int(summary.get("failed_batch_rows", 0) or 0),
-        "model_usage": usage,
-    }
-
-
-def _database_performance_monitoring(model_metrics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    latest = _normalise_metric_rows(model_metrics) if model_metrics else []
-    if not latest:
-        latest = _query_database(
-            """
-            select distinct on (model_name)
-              model_name, model_version, accuracy, precision, sensitivity_recall,
-              specificity, f1_score, auc_roc, created_at
-            from public.model_metric_snapshots
-            order by model_name, created_at desc
-            """
-        )
-    trend = _query_database(
-        """
-        select
-          to_char(created_at::date, 'Mon DD') as day,
-          round(avg(auc_roc)::numeric, 4) as auc,
-          round(avg(f1_score)::numeric, 4) as f1,
-          round(avg(abs(precision - sensitivity_recall))::numeric, 4) as calibration
-        from public.model_metric_snapshots
-        where created_at >= now() - interval '7 days'
-        group by created_at::date
-        order by created_at::date
-        """
-    )
-    total_today = _query_database(
-        """
-        select count(*)::int as count
-        from public.prediction_results
-        where created_at::date = current_date
-        """
-    )
-    latest_best = max(latest, key=lambda item: float(item.get("auc_roc") or 0), default={})
-    avg_f1 = _avg([row.get("f1_score") for row in latest])
-    avg_calibration = _avg([abs(float(row.get("precision") or 0) - float(row.get("sensitivity_recall") or 0)) for row in latest])
-
-    return {
-        "metrics": [
-            _metric("Current AUC", _format_decimal(latest_best.get("auc_roc"), "0.91"), "Best latest model snapshot", "TrendingUp", "cyan"),
-            _metric("F1 score", _format_decimal(avg_f1, "0.85"), "Average across latest model snapshots", "Gauge", "green"),
-            _metric("Calibration proxy", _format_decimal(avg_calibration, "0.06"), "Precision-recall gap; lower is better", "TrendingDown", "green"),
-            _metric("Assessments today", f"{int(total_today[0].get('count', 0) if total_today else 0):,}", "Completed prediction results", "Activity", "slate"),
-        ],
-        "trend": trend or _default_performance_trend(),
-        "model_comparison": _model_comparison_rows(latest)
-        or _default_model_comparison(),
-    }
-
-
-def _database_fairness_monitoring() -> dict[str, Any]:
-    rows = _query_database(
-        """
-        select distinct on (sensitive_attribute, group_name, metric_name)
-          sensitive_attribute, group_name, metric_name, metric_value, created_at
-        from public.fairness_metric_snapshots
-        order by sensitive_attribute, group_name, metric_name, created_at desc
-        """
-    )
-    if not rows:
-        return _memory_fairness_monitoring()
-
-    grouped: dict[str, dict[str, Any]] = defaultdict(dict)
-    for row in rows:
-        group = row["group_name"]
-        grouped[group]["group"] = group
-        grouped[group]["sample"] = "Snapshot"
-        grouped[group][row["metric_name"]] = row["metric_value"]
-
-    cohorts = []
-    for item in grouped.values():
-        tpr = float(item.get("tpr") or item.get("true_positive_rate") or item.get("equal_opportunity") or 0)
-        fpr = float(item.get("fpr") or item.get("false_positive_rate") or 0)
-        gap = float(item.get("disparity_gap") or item.get("demographic_parity_difference") or 0)
-        cohorts.append(_fairness_row(item["group"], item["sample"], tpr, fpr, gap))
-
-    return {
-        "cohorts": cohorts,
-        "chart": [{"cohort": row["group"], "disparity": row["disparity"]} for row in cohorts],
-        "watch_count": sum(1 for row in cohorts if row["tone"] in ("amber", "red")),
-    }
-
-
-def _database_drift_monitoring() -> dict[str, Any]:
-    latest = _query_database(
-        """
-        select distinct on (feature_name)
-          feature_name, drift_score, threshold_value, drift_status, alert_triggered
-        from public.data_drift_snapshots
-        order by feature_name, created_at desc
-        """
-    )
-    trend = _query_database(
-        """
-        select
-          to_char(created_at::date, 'Mon DD') as day,
-          round(avg(drift_score) filter (where feature_name in ('thalach', 'max_heart_rate'))::numeric, 4) as hr,
-          round(avg(drift_score) filter (where feature_name in ('trestbps', 'resting_bp'))::numeric, 4) as bp,
-          round(avg(drift_score) filter (where feature_name in ('chol', 'cholesterol'))::numeric, 4) as cholesterol
-        from public.data_drift_snapshots
-        where created_at >= now() - interval '7 days'
-        group by created_at::date
-        order by created_at::date
-        """
-    )
-    if not latest:
-        return _memory_drift_monitoring()
-
-    features = [
-        {
-            "feature": _feature_label_for_admin(row["feature_name"]),
-            "psi": round(float(row.get("drift_score") or 0), 4),
-            "status": _drift_status_label(float(row.get("drift_score") or 0), float(row.get("threshold_value") or 0.2)),
-            "tone": _drift_tone(float(row.get("drift_score") or 0), float(row.get("threshold_value") or 0.2)),
-        }
-        for row in latest
-    ]
-    max_score = max((feature["psi"] for feature in features), default=0)
-    active_alerts = sum(1 for feature in features if feature["tone"] == "red")
-    threshold_progress = min(round((max_score / 0.2) * 100), 100) if max_score else 0
-
-    return {
-        "metrics": [
-            _metric("Overall drift score", _format_decimal(max_score, "0.16"), "Highest latest PSI across features", "DatabaseZap", _drift_tone(max_score, 0.2)),
-            _metric("Features monitored", str(len(features)), "Clinical inputs with drift snapshots", "BarChart3", "slate"),
-            _metric("Retrain trigger", f"{threshold_progress}%", "Of policy threshold reached", "RefreshCw", "cyan"),
-            _metric("Active alerts", str(active_alerts), "Features above drift threshold", "AlertTriangle", "red" if active_alerts else "green"),
-        ],
-        "trend": _fill_drift_trend(trend),
-        "features": features,
-        "active_alerts": active_alerts,
-    }
-
-
-def _database_error_monitoring() -> dict[str, Any]:
-    rows = _query_database(
-        """
-        select
-          bpr.batch_row_id::text as id,
-          coalesce(bpr.patient_reference_id, 'Unassigned') as patient,
-          coalesce(bpr.error_message, 'Batch row failed') as issue,
-          coalesce(uf.file_name, 'Batch upload') as source,
-          bpr.created_at,
-          bpr.status
-        from public.batch_prediction_rows bpr
-        left join public.uploaded_files uf on uf.upload_id = bpr.upload_id
-        where bpr.status = 'failed'
-        order by bpr.created_at desc
-        limit 12
-        """
-    )
-    trend = _query_database(
-        """
-        select
-          to_char(created_at::date, 'Mon DD') as day,
-          count(*) filter (where status = 'failed')::int as failed,
-          count(*) filter (where status = 'success')::int as resolved
-        from public.batch_prediction_rows
-        where created_at >= now() - interval '7 days'
-        group by created_at::date
-        order by created_at::date
-        """
-    )
-    return _error_payload(rows, trend)
-
-
-def _memory_performance_monitoring(model_metrics: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    if model_metrics:
-        latest = _normalise_metric_rows(model_metrics)
-        best = max(latest, key=lambda item: float(item.get("auc_roc") or 0), default={})
-        today = date.today().isoformat()
-        assessments_today = sum(1 for result in _results if str(result.get("created_at", "")).startswith(today))
-        return {
-            "metrics": [
-                _metric("Current AUC", _format_decimal(best.get("auc_roc"), "0.91"), "Best current model", "TrendingUp", "cyan"),
-                _metric("F1 score", _format_decimal(_avg([row.get("f1_score") for row in latest]), "0.85"), "Average across all 4 models", "Gauge", "green"),
-                _metric("Calibration proxy", _format_decimal(_avg([abs(float(row.get("precision") or 0) - float(row.get("sensitivity_recall") or 0)) for row in latest]), "0.06"), "Precision-recall gap; lower is better", "TrendingDown", "green"),
-                _metric("Assessments today", f"{assessments_today:,}", "Completed prediction results", "Activity", "slate"),
-            ],
-            "trend": _default_performance_trend(),
-            "model_comparison": _model_comparison_rows(latest),
-        }
-
-    latest_by_model: dict[str, dict[str, Any]] = {}
-    for row in _model_metric_snapshots:
-        current = latest_by_model.get(row["model_name"])
-        if not current or row["created_at"] > current["created_at"]:
-            latest_by_model[row["model_name"]] = row
-
-    latest = list(latest_by_model.values())
-    best = max(latest, key=lambda item: float(item.get("auc_roc") or 0), default={})
-    today = date.today().isoformat()
-    assessments_today = sum(1 for result in _results if str(result.get("created_at", "")).startswith(today))
-
-    return {
-        "metrics": [
-            _metric("Current AUC", _format_decimal(best.get("auc_roc"), "0.91"), "Best latest model snapshot", "TrendingUp", "cyan"),
-            _metric("F1 score", _format_decimal(_avg([row.get("f1_score") for row in latest]), "0.85"), "Average across latest model snapshots", "Gauge", "green"),
-            _metric("Calibration proxy", _format_decimal(_avg([abs(float(row.get("precision") or 0) - float(row.get("sensitivity_recall") or 0)) for row in latest]), "0.06"), "Precision-recall gap; lower is better", "TrendingDown", "green"),
-            _metric("Assessments today", f"{assessments_today:,}", "Completed prediction results", "Activity", "slate"),
-        ],
-        "trend": _memory_performance_trend(latest),
-        "model_comparison": _model_comparison_rows(latest)
-        or _default_model_comparison(),
-    }
-
-
-def _memory_fairness_monitoring() -> dict[str, Any]:
-    if not _requests or not _results:
-        cohorts = [
-            _fairness_row("Female patients", "Demo", 0.848, 0.071, 1.6),
-            _fairness_row("Male patients", "Demo", 0.832, 0.079, 0),
-            _fairness_row("Age 65+", "Demo", 0.794, 0.098, -3.8),
-            _fairness_row("High cholesterol", "Demo", 0.811, 0.085, -2.1),
-        ]
-        return {
-            "cohorts": cohorts,
-            "chart": [{"cohort": row["group"].replace(" patients", ""), "disparity": row["disparity"]} for row in cohorts],
-            "watch_count": 1,
-        }
-
-    joined = []
-    request_by_id = {request["request_id"]: request for request in _requests}
-    for result in _results:
-        request = request_by_id.get(result["request_id"])
-        if request:
-            joined.append({**request, **result})
-
-    groups = [
-        ("Female patients", lambda row: row.get("sex") == 0),
-        ("Male patients", lambda row: row.get("sex") == 1),
-        ("Age 65+", lambda row: int(row.get("age") or 0) >= 65),
-        ("High cholesterol", lambda row: float(row.get("chol") or 0) >= 240),
-    ]
-    baseline_rate = _positive_rate([row for row in joined if row.get("sex") == 1])
-    cohorts = []
-    for name, predicate in groups:
-        rows = [row for row in joined if predicate(row)]
-        rate = _positive_rate(rows)
-        gap = (rate - baseline_rate) * 100
-        cohorts.append(_fairness_row(name, f"{len(rows):,}", rate, max(rate * 0.12, 0.01), gap))
-
-    return {
-        "cohorts": cohorts,
-        "chart": [{"cohort": row["group"].replace(" patients", ""), "disparity": row["disparity"]} for row in cohorts],
-        "watch_count": sum(1 for row in cohorts if row["tone"] in ("amber", "red")),
-    }
-
-
-def _memory_drift_monitoring() -> dict[str, Any]:
-    features = _memory_feature_drift()
-    max_score = max((feature["psi"] for feature in features), default=0)
-    alerts = sum(1 for feature in features if feature["tone"] == "red")
-    return {
-        "metrics": [
-            _metric("Overall drift score", _format_decimal(max_score, "0.16"), "Estimated shift from training baseline", "DatabaseZap", _drift_tone(max_score, 0.2)),
-            _metric("Features monitored", str(len(features)), "Clinical inputs derived from assessments", "BarChart3", "slate"),
-            _metric("Retrain trigger", f"{min(round((max_score / 0.2) * 100), 100) if max_score else 72}%", "Of policy threshold reached", "RefreshCw", "cyan"),
-            _metric("Active alerts", str(alerts), "Features above drift threshold", "AlertTriangle", "red" if alerts else "green"),
-        ],
-        "trend": _default_drift_trend(),
-        "features": features,
-        "active_alerts": alerts,
-    }
-
-
-def _memory_error_monitoring() -> dict[str, Any]:
-    rows = [
-        {
-            "id": row["batch_row_id"],
-            "patient": row.get("patient_reference_id") or "Unassigned",
-            "issue": row.get("error_message") or "Batch row failed",
-            "source": "Batch prediction",
-            "created_at": row.get("created_at"),
-            "status": row.get("status"),
-        }
-        for row in _batch_rows
-        if row.get("status") == "failed"
-    ]
-    return _error_payload(rows, _memory_error_trend())
-
-
-def _memory_feature_drift() -> list[dict[str, Any]]:
-    if not _requests:
-        return [
-            {"feature": "Resting BP", "psi": 0.18, "status": "Moderate", "tone": "amber"},
-            {"feature": "Cholesterol", "psi": 0.11, "status": "Stable", "tone": "green"},
-            {"feature": "Max heart rate", "psi": 0.24, "status": "Investigate", "tone": "red"},
-            {"feature": "Oldpeak", "psi": 0.08, "status": "Stable", "tone": "green"},
-            {"feature": "Chest pain type", "psi": 0.15, "status": "Moderate", "tone": "amber"},
-        ]
-
-    baseline = {
-        "trestbps": 131.6,
-        "chol": 246.7,
-        "thalach": 149.6,
-        "oldpeak": 1.04,
-        "cp": 3.16,
-    }
-    labels = {
-        "trestbps": "Resting BP",
-        "chol": "Cholesterol",
-        "thalach": "Max heart rate",
-        "oldpeak": "Oldpeak",
-        "cp": "Chest pain type",
-    }
-    features = []
-    for feature, baseline_mean in baseline.items():
-        values = [float(row.get(feature) or 0) for row in _requests if row.get(feature) is not None]
-        current = sum(values) / len(values) if values else baseline_mean
-        score = min(abs(current - baseline_mean) / max(abs(baseline_mean), 1), 0.35)
-        features.append(
-            {
-                "feature": labels[feature],
-                "psi": round(score, 4),
-                "status": _drift_status_label(score, 0.2),
-                "tone": _drift_tone(score, 0.2),
-            }
-        )
-    return features
-
-
-def _memory_performance_trend(latest: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_day: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in latest:
-        day = str(row.get("created_at", ""))[:10]
-        if day:
-            by_day[day].append(row)
-    trend = []
-    for day in sorted(by_day)[-7:]:
-        rows = by_day[day]
-        trend.append(
-            {
-                "day": _short_day(day),
-                "auc": round(_avg([row.get("auc_roc") for row in rows]) or 0, 4),
-                "f1": round(_avg([row.get("f1_score") for row in rows]) or 0, 4),
-                "calibration": round(_avg([abs(float(row.get("precision") or 0) - float(row.get("sensitivity_recall") or 0)) for row in rows]) or 0, 4),
-            }
-        )
-    return trend or _default_performance_trend()
-
-
-def _memory_error_trend() -> list[dict[str, Any]]:
-    start = date.today() - timedelta(days=6)
-    rows = []
-    for offset in range(7):
-        day = start + timedelta(days=offset)
-        day_key = day.isoformat()
-        rows.append(
-            {
-                "day": day.strftime("%b %d"),
-                "failed": sum(1 for row in _batch_rows if str(row.get("created_at", "")).startswith(day_key) and row.get("status") == "failed"),
-                "resolved": sum(1 for row in _batch_rows if str(row.get("created_at", "")).startswith(day_key) and row.get("status") == "success"),
-            }
-        )
-    return rows
-
-
-def _error_payload(rows: list[dict[str, Any]], trend: list[dict[str, Any]]) -> dict[str, Any]:
-    chart_trend = trend or _default_error_trend()
-    error_rows = [
-        {
-            "id": str(row.get("id", ""))[:12] or "ERR",
-            "patient": row.get("patient") or "Unassigned",
-            "issue": row.get("issue") or "Assessment failed",
-            "source": row.get("source") or "Batch prediction",
-            "time": _relative_time(row.get("created_at")),
-            "status": "Needs review",
-            "tone": "amber",
-        }
-        for row in rows[:8]
-    ]
-    failed_total = sum(int(row.get("failed") or 0) for row in chart_trend)
-    resolved_total = sum(int(row.get("resolved") or 0) for row in chart_trend)
-    sla = round((resolved_total / (failed_total + resolved_total)) * 100) if failed_total + resolved_total else 100
-    return {
-        "rows": error_rows,
-        "trend": chart_trend,
-        "open_failures": len(rows),
-        "resolved_today": int((chart_trend[-1] if chart_trend else {}).get("resolved") or 0),
-        "sla": sla,
-    }
-
-
-def _metric(label: str, value: str, detail: str, icon: str, tone: str) -> dict[str, str]:
-    return {"label": label, "value": value, "detail": detail, "icon": icon, "tone": tone}
-
-
 def _activity_log_item(row: dict[str, Any]) -> dict[str, Any]:
     action = str(row.get("action") or "SYSTEM_EVENT")
-    entity_type = row.get("entity_type")
-    created_at = row.get("created_at") or _now()
     return {
         "log_id": row.get("log_id") or str(uuid4()),
-        "timestamp": created_at,
+        "timestamp": row.get("created_at") or _now(),
         "actor": row.get("user_id"),
-        "event_type": entity_type or _activity_event_type(action),
+        "actor_name": row.get("full_name"),
+        "actor_email": row.get("email"),
+        "actor_role": row.get("role"),
+        "category": _activity_category(action),
         "action": action,
-        "entity_type": entity_type,
+        "entity_type": row.get("entity_type"),
         "entity_id": row.get("entity_id"),
         "status": _activity_status(action),
+        "details": row.get("metadata"),
     }
 
 
-def _activity_event_type(action: str) -> str:
-    if "PREDICTION" in action or "ASSESSMENT" in action:
-        return "assessment"
-    if "BATCH" in action or "UPLOAD" in action:
-        return "batch"
-    if "FEEDBACK" in action:
-        return "feedback"
-    if "ERROR" in action or "FAILED" in action:
-        return "error"
+def _activity_category(action: str) -> str:
+    for category, patterns in ACTIVITY_CATEGORIES.items():
+        if any(pattern in action for pattern in patterns):
+            return category
     return "system"
 
 
 def _activity_status(action: str) -> str:
-    if "FAILED" in action or "ERROR" in action or "FAILURE" in action:
-        return "failed"
-    if "PREVIEW" in action or "RETRY" in action:
-        return "warning"
+    for status, patterns in ACTIVITY_STATUS_PATTERNS.items():
+        if any(pattern in action for pattern in patterns):
+            return status
     return "success"
-
-
-def _fairness_row(group: str, sample: str, tpr: float, fpr: float, gap: float) -> dict[str, Any]:
-    absolute_gap = abs(gap)
-    tone = "red" if absolute_gap >= 5 else "amber" if absolute_gap >= 3 else "green"
-    status = "Investigate" if tone == "red" else "Watch" if tone == "amber" else "Within limit"
-    if absolute_gap == 0:
-        tone = "cyan"
-        status = "Reference"
-    return {
-        "group": group,
-        "sample": sample,
-        "tpr": _percent(tpr),
-        "fpr": _percent(fpr),
-        "gap": "Baseline" if absolute_gap == 0 else f"{gap:+.1f}%",
-        "disparity": round(gap, 2),
-        "status": status,
-        "tone": tone,
-    }
-
-
-def _avg(values: list[Any]) -> float | None:
-    clean = [float(value) for value in values if value is not None]
-    return sum(clean) / len(clean) if clean else None
-
-
-def _positive_rate(rows: list[dict[str, Any]]) -> float:
-    if not rows:
-        return 0.0
-    return sum(1 for row in rows if int(row.get("predicted_class") or 0) == 1) / len(rows)
-
-
-def _format_decimal(value: Any, fallback: str) -> str:
-    if value is None:
-        return fallback
-    return f"{float(value):.2f}"
-
-
-def _percent(value: float) -> str:
-    return f"{value * 100:.1f}%"
-
-
-def _display_model_name(model_name: str) -> str:
-    labels = {
-        "xgboost": "XGBoost",
-        "random_forest": "Random Forest",
-        "neural_network": "Neural Network",
-        "logistic_regression": "Logistic Regression",
-    }
-    return labels.get(model_name, model_name.replace("_", " ").title())
-
-
-def _normalise_metric_rows(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    order = {
-        "xgboost": 0,
-        "random_forest": 1,
-        "neural_network": 2,
-        "logistic_regression": 3,
-    }
-    return sorted(
-        [{**metric, "created_at": metric.get("created_at") or _now()} for metric in metrics],
-        key=lambda item: order.get(str(item.get("model_name")), 99),
-    )
-
-
-def _model_comparison_rows(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "model": _display_model_name(row["model_name"]),
-            "accuracy": round(float(row.get("accuracy") or 0) * 100),
-            "auc": round(float(row.get("auc_roc") or 0) * 100),
-            "precision": round(float(row.get("precision") or 0) * 100),
-            "recall": round(float(row.get("sensitivity_recall") or 0) * 100),
-            "f1": round(float(row.get("f1_score") or 0) * 100),
-        }
-        for row in metrics
-    ]
-
-
-def _feature_label_for_admin(feature_name: str) -> str:
-    labels = {
-        "trestbps": "Resting BP",
-        "chol": "Cholesterol",
-        "thalach": "Max heart rate",
-        "cp": "Chest pain type",
-    }
-    return labels.get(feature_name, feature_name.replace("_", " ").title())
-
-
-def _drift_tone(score: float, threshold: float) -> str:
-    if score >= threshold:
-        return "red"
-    if score >= threshold * 0.6:
-        return "amber"
-    return "green"
-
-
-def _drift_status_label(score: float, threshold: float) -> str:
-    tone = _drift_tone(score, threshold)
-    return "Investigate" if tone == "red" else "Moderate" if tone == "amber" else "Stable"
-
-
-def _fill_drift_trend(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    clean = [
-        {
-            "day": row["day"],
-            "hr": float(row.get("hr") or 0),
-            "bp": float(row.get("bp") or 0),
-            "cholesterol": float(row.get("cholesterol") or 0),
-        }
-        for row in rows
-    ]
-    return clean or _default_drift_trend()
-
-
-def _relative_time(value: Any) -> str:
-    if not value:
-        return "Recently"
-    try:
-        created = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return str(value)
-    delta = datetime.now(UTC) - created.astimezone(UTC)
-    if delta.days == 0:
-        return "Today"
-    if delta.days == 1:
-        return "Yesterday"
-    return f"{delta.days} days ago"
-
-
-def _short_day(value: str) -> str:
-    try:
-        return datetime.fromisoformat(value).strftime("%b %d")
-    except ValueError:
-        return value
-
-
-def _default_performance_trend() -> list[dict[str, Any]]:
-    return [
-        {"day": "Jun 06", "auc": 0.91, "f1": 0.84, "calibration": 0.07},
-        {"day": "Jun 07", "auc": 0.92, "f1": 0.85, "calibration": 0.06},
-        {"day": "Jun 08", "auc": 0.9, "f1": 0.83, "calibration": 0.08},
-        {"day": "Jun 09", "auc": 0.93, "f1": 0.86, "calibration": 0.05},
-        {"day": "Jun 10", "auc": 0.92, "f1": 0.85, "calibration": 0.06},
-        {"day": "Jun 11", "auc": 0.91, "f1": 0.84, "calibration": 0.07},
-        {"day": "Jun 12", "auc": 0.94, "f1": 0.87, "calibration": 0.05},
-    ]
-
-
-def _default_model_comparison() -> list[dict[str, Any]]:
-    return [
-        {"model": "XGBoost", "accuracy": 87, "auc": 93, "precision": 88, "recall": 86, "f1": 87},
-        {"model": "Random Forest", "accuracy": 85, "auc": 91, "precision": 86, "recall": 84, "f1": 85},
-        {"model": "Neural Network", "accuracy": 84, "auc": 90, "precision": 85, "recall": 83, "f1": 84},
-        {"model": "Logistic Regression", "accuracy": 81, "auc": 86, "precision": 82, "recall": 81, "f1": 81},
-    ]
-
-
-def _default_drift_trend() -> list[dict[str, Any]]:
-    return [
-        {"day": "Jun 06", "bp": 0.08, "hr": 0.12, "cholesterol": 0.09},
-        {"day": "Jun 07", "bp": 0.1, "hr": 0.15, "cholesterol": 0.1},
-        {"day": "Jun 08", "bp": 0.11, "hr": 0.18, "cholesterol": 0.1},
-        {"day": "Jun 09", "bp": 0.13, "hr": 0.2, "cholesterol": 0.11},
-        {"day": "Jun 10", "bp": 0.15, "hr": 0.22, "cholesterol": 0.1},
-        {"day": "Jun 11", "bp": 0.17, "hr": 0.23, "cholesterol": 0.12},
-        {"day": "Jun 12", "bp": 0.18, "hr": 0.24, "cholesterol": 0.11},
-    ]
-
-
-def _default_error_trend() -> list[dict[str, Any]]:
-    return [
-        {"day": "Jun 06", "failed": 7, "resolved": 5},
-        {"day": "Jun 07", "failed": 6, "resolved": 6},
-        {"day": "Jun 08", "failed": 9, "resolved": 7},
-        {"day": "Jun 09", "failed": 5, "resolved": 6},
-        {"day": "Jun 10", "failed": 8, "resolved": 8},
-        {"day": "Jun 11", "failed": 11, "resolved": 9},
-        {"day": "Jun 12", "failed": 4, "resolved": 7},
-    ]
-
-
-def _feature_keys() -> list[str]:
-    return [
-        "age",
-        "sex",
-        "cp",
-        "trestbps",
-        "chol",
-        "fbs",
-        "restecg",
-        "thalach",
-        "exang",
-        "oldpeak",
-        "slope",
-        "ca",
-        "thal",
-    ]

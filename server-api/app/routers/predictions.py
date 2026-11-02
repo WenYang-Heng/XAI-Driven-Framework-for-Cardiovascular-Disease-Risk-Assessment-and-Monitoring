@@ -28,6 +28,12 @@ async def create_prediction(request: PredictionRequest) -> dict:
         prediction_payload = prediction.model_dump(mode="json")
         request_id, result_id, patient_case_id, patient_reference_id = await storage.save_prediction(request_payload, prediction_payload)
     except httpx.HTTPError as error:
+        await storage.log_activity(
+            request_payload.get("user_id"),
+            "PREDICTION_REQUEST_FAILED",
+            "prediction_requests",
+            metadata={"model_name": request.model_name, "error": str(error)[:200]},
+        )
         raise HTTPException(status_code=502, detail=f"server-ml request failed: {error}") from error
 
     return {

@@ -327,3 +327,64 @@ Invoke-RestMethod `
 ```
 
 CSV, XLSX, and XLS uploads are supported. Invalid rows return row-level errors instead of failing the entire upload.
+
+## Framingham Risk Score Card (FasterRisk)
+
+Alongside the UCI models above, the service has an **interpretable points-based risk score** for 10-year coronary heart disease (CHD). It is trained on the Framingham Heart Study dataset with [FasterRisk](https://github.com/jiachangliu/FasterRisk) (Liu et al., NeurIPS 2022).
+
+A score card is a handful of yes/no rules, each worth a whole number of points. Add up the points, then look up the risk:
+
+```text
+ 1. Male                                          +2 points
+ 2. Age 45 or older                               +3 points
+ 3. Age 55 or older                               +3 points
+ 4. Smokes 10+ cigarettes a day                   +2 points
+ 5. Diagnosed with hypertension                   +3 points
+ 6. Glucose 126 mg/dL or higher                   +5 points
+
+risk = 1 / (1 + exp(-(intercept + total_points) / multiplier))
+```
+
+The card is the whole model, so the explanation is exact and needs no SHAP or LIME.
+
+### Files
+
+| File | Purpose |
+| --- | --- |
+| `app/services/framingham_dataset.py` | Loads `data/raw/framingham.csv` (downloaded automatically) and defines the readable yes/no rules FasterRisk can choose from |
+| `scripts/train_framingham_score.py` | Runs FasterRisk, compares against logistic regression, saves the card |
+| `app/score_cards/framingham.json` | The trained card (committed, human-readable) |
+| `app/services/framingham_score.py` | Scores a patient from the JSON card (no FasterRisk needed at runtime) |
+| `app/routers/framingham.py` | API endpoints |
+
+### Train the card
+
+FasterRisk is only needed for training. Install it **without** its dependencies, because it pins old pandas and scikit-learn versions:
+
+```powershell
+cd server-ml
+pip install -r requirements-training.txt
+pip install --no-deps fasterrisk==0.1.10
+
+.\venv\Scripts\python.exe scripts\train_framingham_score.py            # 6-item card (default)
+.\venv\Scripts\python.exe scripts\train_framingham_score.py --sweep    # compare 3..10 items first
+.\venv\Scripts\python.exe scripts\train_framingham_score.py --k 8      # choose a different size
+```
+
+Data: rows with missing inputs are dropped, leaving 3,751 rows (15.2% CHD), with an 80/20 stratified split (`random_state=42`).
+
+| Items on card | 3 | 4 | 5 | **6** | 7 | 8 | 9 | 10 | Logistic regression (14 raw inputs) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Test AUC | 0.635 | 0.645 | 0.670 | **0.687** | 0.679 | 0.684 | 0.681 | 0.675 | 0.700 |
+
+### Endpoints
+
+- `GET /framingham/score-card`: the card's rules and points, a total-points-to-risk table, and metrics
+- `POST /framingham/predict`: total points, risk, risk level (low < 10%, moderate 10–20%, high ≥ 20%), and a line-by-line breakdown
+
+Only the inputs used by the current card are required. Others can be omitted.
+
+```json
+POST /framingham/predict
+{ "male": 1, "age": 58, "cigsPerDay": 15, "prevalentHyp": 1, "glucose": 90 }
+```

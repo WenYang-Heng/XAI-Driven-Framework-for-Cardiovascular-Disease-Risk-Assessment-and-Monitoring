@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AdminAIMonitoringPanel } from "./pages/admin";
+import { recordSessionEvent } from "./pages/admin/api";
 import { AuthPage } from "./pages/auth";
 import { DomainExpertDashboard } from "./pages/domain-expert";
 import { PatientDashboard } from "./pages/patient";
@@ -69,6 +70,7 @@ function App() {
   }, []);
 
   async function logout() {
+    await recordSessionEvent("logout", currentUser?.id);
     await supabase?.auth.signOut();
     setCurrentUser(null);
     setCurrentPage("login");
@@ -79,7 +81,7 @@ function App() {
   }
 
   if (currentPage === "admin") {
-    return <AdminAIMonitoringPanel onLogout={logout} />;
+    return <AdminAIMonitoringPanel currentUser={currentUser} onLogout={logout} />;
   }
 
   if (currentPage === "patient") {
@@ -90,6 +92,7 @@ function App() {
     <AuthPage
       initialMode={currentPage === "reset-password" ? "reset-password" : "login"}
       onAuthenticated={(role, user) => {
+        recordSessionEvent("login", user?.id);
         setCurrentUser(user);
         setCurrentPage(pageForRole(role));
       }}

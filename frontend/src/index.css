@@ -69,3 +69,22 @@ button {
   border-color: #22d3ee;
   box-shadow: 0 0 0 4px rgba(207, 250, 254, 0.9);
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .shadow-soft {
+    box-shadow: none;
+  }
+
+  #admin-report .report-section {
+    break-before: page;
+  }
+
+  #admin-report .recharts-wrapper,
+  #admin-report table {
+    break-inside: avoid;
+  }
+}

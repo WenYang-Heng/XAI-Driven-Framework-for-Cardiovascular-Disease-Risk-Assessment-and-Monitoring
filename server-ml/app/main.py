@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import batch, dataset, health, predict
+from app.routers import batch, dataset, framingham, health, monitoring, predict
 
 
 app = FastAPI(
@@ -22,10 +22,13 @@ app.include_router(health.router)
 app.include_router(dataset.router)
 app.include_router(predict.router)
 app.include_router(batch.router)
+app.include_router(monitoring.router)
+app.include_router(framingham.router)
 
 app.include_router(dataset.router, prefix="/api/v1")
 app.include_router(predict.router, prefix="/api/v1")
 app.include_router(batch.router, prefix="/api/v1")
+app.include_router(monitoring.router, prefix="/api/v1")
 
 
 @app.get("/")

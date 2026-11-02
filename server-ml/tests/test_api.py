@@ -348,3 +348,52 @@ def _xai_payload(final_value: float) -> XaiExplanation:
         lime=LimeExplanation(contributions=contributions),
         summary=["Rule-based XAI summary."],
     )
+
+
+def test_fairness_reports_gaps_against_reference_group():
+    response = client.get("/monitoring/fairness/logistic_regression")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {attribute["attribute"] for attribute in body["attributes"]} == {"sex", "age_group", "fasting_blood_sugar"}
+    for attribute in body["attributes"]:
+        reference = [group for group in attribute["groups"] if group["is_reference"]]
+        assert len(reference) == 1
+        assert reference[0]["group"] == attribute["reference_group"]
+        assert reference[0]["tpr_gap"] == 0
+        assert sum(group["sample_size"] for group in attribute["groups"]) == body["sample_size"]
+
+
+def _training_records() -> list[dict]:
+    from app.services.risk_model import get_evaluation_split
+
+    X_train = get_evaluation_split()[0]
+    return [{**row, "day": "2026-10-01"} for row in X_train.to_dict("records")]
+
+
+def test_drift_is_stable_when_inputs_match_training_baseline():
+    response = client.post("/monitoring/drift", json={"records": _training_records()})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["limited_confidence"] is False
+    assert all(feature["status"] == "stable" for feature in body["features"])
+    assert body["trend"][0]["psi"]
+
+
+def test_drift_flags_shifted_feature():
+    records = [{**row, "trestbps": row["trestbps"] + 30} for row in _training_records()]
+
+    body = client.post("/monitoring/drift", json={"records": records}).json()
+
+    top = body["features"][0]
+    assert top["feature"] == "trestbps"
+    assert top["status"] == "significant"
+
+
+def test_drift_without_records_reports_no_data():
+    body = client.post("/monitoring/drift", json={"records": []}).json()
+
+    assert body["current_size"] == 0
+    assert body["limited_confidence"] is True
+    assert all(feature["status"] == "no_data" for feature in body["features"])

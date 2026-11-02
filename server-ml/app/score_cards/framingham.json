@@ -1,0 +1,54 @@
+{
+  "name": "framingham-fasterrisk",
+  "description": "Points-based 10-year coronary heart disease risk score learned with FasterRisk.",
+  "dataset": "Framingham Heart Study",
+  "outcome": "10-year coronary heart disease (TenYearCHD)",
+  "trained_on": "2026-11-02",
+  "rows_used": 3751,
+  "intercept": -13.0,
+  "multiplier": 3.6130987794419225,
+  "items": [
+    {
+      "field": "male",
+      "threshold": 1,
+      "label": "Male",
+      "points": 2
+    },
+    {
+      "field": "age",
+      "threshold": 45,
+      "label": "Age 45 or older",
+      "points": 3
+    },
+    {
+      "field": "age",
+      "threshold": 55,
+      "label": "Age 55 or older",
+      "points": 3
+    },
+    {
+      "field": "cigsPerDay",
+      "threshold": 10,
+      "label": "Smokes 10+ cigarettes a day",
+      "points": 2
+    },
+    {
+      "field": "prevalentHyp",
+      "threshold": 1,
+      "label": "Diagnosed with hypertension",
+      "points": 3
+    },
+    {
+      "field": "glucose",
+      "threshold": 126,
+      "label": "Glucose 126 mg/dL or higher",
+      "points": 5
+    }
+  ],
+  "metrics": {
+    "train_auc": 0.7332,
+    "test_auc": 0.6865,
+    "baseline_logistic_regression_test_auc": 0.7003,
+    "test_size": 751
+  }
+}

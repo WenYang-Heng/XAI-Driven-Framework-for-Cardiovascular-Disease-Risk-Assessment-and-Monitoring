@@ -140,3 +140,149 @@ class DatasetSummary(BaseModel):
     input_features: list[str]
     target: str
     rows_after_cleaning: int
+
+
+class FairnessGroupMetrics(BaseModel):
+    group: str
+    sample_size: int
+    prevalence: float | None = None
+    selection_rate: float | None = None
+    true_positive_rate: float | None = None
+    false_positive_rate: float | None = None
+    accuracy: float | None = None
+    is_reference: bool = False
+    tpr_gap: float | None = None
+    fpr_gap: float | None = None
+    selection_rate_gap: float | None = None
+    disparate_impact: float | None = None
+    limited_confidence: bool = False
+
+
+class FairnessAttributeResult(BaseModel):
+    attribute: str
+    label: str
+    reference_group: str
+    demographic_parity_difference: float | None = None
+    equal_opportunity_difference: float | None = None
+    status: Literal["within_limit", "watch", "investigate"]
+    groups: list[FairnessGroupMetrics]
+
+
+class FairnessResponse(BaseModel):
+    model_name: ModelName
+    evaluation_method: str
+    sample_size: int
+    min_group_size: int
+    thresholds: dict[str, float]
+    attributes: list[FairnessAttributeResult]
+
+
+class DriftRecord(BaseModel):
+    day: str | None = Field(None, description="ISO date the assessment was made, used for the daily trend")
+    age: float
+    sex: float
+    cp: float
+    trestbps: float
+    chol: float
+    fbs: float
+    restecg: float
+    thalach: float
+    exang: float
+    oldpeak: float
+    slope: float
+    ca: float
+    thal: float
+
+
+class DriftRequest(BaseModel):
+    records: list[DriftRecord] = Field(default_factory=list, max_length=50_000)
+
+
+class DriftDistributionBin(BaseModel):
+    bin: str
+    baseline: float
+    current: float
+
+
+class DriftFeatureResult(BaseModel):
+    feature: str
+    label: str
+    kind: Literal["numeric", "categorical"]
+    psi: float
+    status: Literal["stable", "moderate", "significant", "no_data"]
+    baseline_mean: float
+    current_mean: float | None = None
+    distribution: list[DriftDistributionBin]
+
+
+class DriftTrendPoint(BaseModel):
+    day: str
+    records: int
+    psi: dict[str, float] = Field(default_factory=dict)
+
+
+class DriftResponse(BaseModel):
+    method: str
+    baseline: str
+    baseline_size: int
+    current_size: int
+    limited_confidence: bool
+    min_records: int
+    thresholds: dict[str, float]
+    overall_psi: float
+    features: list[DriftFeatureResult]
+    trend: list[DriftTrendPoint]
+
+
+class FraminghamRiskRequest(BaseModel):
+    """Patient inputs for the Framingham score card. Only fields used by the card are required."""
+
+    male: Literal[0, 1] | None = Field(None, description="1 = male; 0 = female", examples=[1])
+    age: float | None = Field(None, ge=0, le=120, examples=[52])
+    currentSmoker: Literal[0, 1] | None = Field(None, examples=[1])
+    cigsPerDay: float | None = Field(None, ge=0, description="Cigarettes smoked per day", examples=[15])
+    BPMeds: Literal[0, 1] | None = Field(None, description="Takes blood pressure medication", examples=[0])
+    prevalentStroke: Literal[0, 1] | None = Field(None, description="Has had a stroke", examples=[0])
+    prevalentHyp: Literal[0, 1] | None = Field(None, description="Diagnosed with hypertension", examples=[1])
+    diabetes: Literal[0, 1] | None = Field(None, examples=[0])
+    totChol: float | None = Field(None, gt=0, description="Total cholesterol in mg/dL", examples=[230])
+    sysBP: float | None = Field(None, gt=0, description="Systolic blood pressure in mmHg", examples=[145])
+    diaBP: float | None = Field(None, gt=0, description="Diastolic blood pressure in mmHg", examples=[90])
+    BMI: float | None = Field(None, gt=0, examples=[27.5])
+    heartRate: float | None = Field(None, gt=0, description="Resting heart rate in bpm", examples=[75])
+    glucose: float | None = Field(None, gt=0, description="Glucose in mg/dL", examples=[85])
+
+
+class ScoreCardItem(BaseModel):
+    label: str
+    field: str
+    threshold: float
+    points: int
+
+
+class ScoreCardLine(ScoreCardItem):
+    applies: bool = Field(..., description="Whether the patient meets this rule and gets its points")
+
+
+class ScoreToRisk(BaseModel):
+    total_points: int
+    risk: float
+
+
+class FraminghamScoreCardResponse(BaseModel):
+    name: str
+    description: str
+    dataset: str
+    outcome: str
+    intercept: float
+    multiplier: float
+    items: list[ScoreCardItem]
+    score_to_risk: list[ScoreToRisk]
+    metrics: dict[str, float]
+
+
+class FraminghamRiskResponse(BaseModel):
+    total_points: int
+    risk: float = Field(..., ge=0, le=1, description="Estimated 10-year CHD risk")
+    risk_level: Literal["low", "moderate", "high"]
+    breakdown: list[ScoreCardLine]

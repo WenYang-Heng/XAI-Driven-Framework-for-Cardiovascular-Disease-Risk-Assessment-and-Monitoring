@@ -11,17 +11,6 @@ UserRole = Literal["ADMIN", "DOMAIN_EXPERT", "GENERAL_USER"]
 PatientCaseStatus = Literal["active", "archived"]
 BatchRowStatus = Literal["success", "failed"]
 PreviewRowStatus = Literal["valid", "invalid"]
-BadgeTone = Literal["cyan", "green", "amber", "red", "slate", "purple"]
-MetricIconName = Literal[
-    "Activity",
-    "AlertTriangle",
-    "BarChart3",
-    "DatabaseZap",
-    "Gauge",
-    "RefreshCw",
-    "TrendingDown",
-    "TrendingUp",
-]
 
 
 class PatientSummary(BaseModel):
@@ -248,145 +237,23 @@ class BatchConfirmRequest(BaseModel):
     single_patient_reference_id: str | None = Field(None, max_length=64)
 
 
-class AdminSummaryMetric(BaseModel):
-    model_name: str
-    count: int = Field(..., ge=0)
-
-
-class AdminSummary(BaseModel):
-    total_users: int = Field(..., ge=0)
-    total_predictions: int = Field(..., ge=0)
-    total_uploads: int = Field(..., ge=0)
-    successful_batch_rows: int = Field(..., ge=0)
-    failed_batch_rows: int = Field(..., ge=0)
-    model_usage: list[AdminSummaryMetric] = Field(default_factory=list)
-
-
-class DashboardMetric(BaseModel):
-    label: str
-    value: str
-    detail: str
-    icon: MetricIconName
-    tone: BadgeTone
-
-
-class PerformanceTrendPoint(BaseModel):
-    day: str
-    auc: float = Field(..., ge=0, le=1)
-    f1: float = Field(..., ge=0, le=1)
-    calibration: float = Field(..., ge=0, le=1)
-
-
-class ModelComparisonMetric(BaseModel):
-    model: str
-    accuracy: int = Field(..., ge=0, le=100)
-    auc: int = Field(..., ge=0, le=100)
-    precision: int = Field(..., ge=0, le=100)
-    recall: int = Field(..., ge=0, le=100)
-    f1: int = Field(..., ge=0, le=100)
-
-
-class AdminPerformanceMonitoring(BaseModel):
-    metrics: list[DashboardMetric] = Field(default_factory=list)
-    trend: list[PerformanceTrendPoint] = Field(default_factory=list)
-    model_comparison: list[ModelComparisonMetric] = Field(default_factory=list)
-
-
-class FairnessCohortMetric(BaseModel):
-    group: str
-    sample: str
-    tpr: str
-    fpr: str
-    gap: str
-    disparity: float
-    status: str
-    tone: BadgeTone
-
-
-class FairnessChartPoint(BaseModel):
-    cohort: str
-    disparity: float
-
-
-class AdminFairnessMonitoring(BaseModel):
-    cohorts: list[FairnessCohortMetric] = Field(default_factory=list)
-    chart: list[FairnessChartPoint] = Field(default_factory=list)
-    watch_count: int = Field(..., ge=0)
-
-
-class DriftTrendPoint(BaseModel):
-    day: str
-    bp: float = Field(..., ge=0)
-    hr: float = Field(..., ge=0)
-    cholesterol: float = Field(..., ge=0)
-
-
-class DriftFeatureMetric(BaseModel):
-    feature: str
-    psi: float = Field(..., ge=0)
-    status: str
-    tone: BadgeTone
-
-
-class AdminDriftMonitoring(BaseModel):
-    metrics: list[DashboardMetric] = Field(default_factory=list)
-    trend: list[DriftTrendPoint] = Field(default_factory=list)
-    features: list[DriftFeatureMetric] = Field(default_factory=list)
-    active_alerts: int = Field(..., ge=0)
-
-
-class ErrorQueueRow(BaseModel):
-    id: str
-    patient: str
-    issue: str
-    source: str
-    time: str
-    status: str
-    tone: BadgeTone
-
-
-class ErrorTrendPoint(BaseModel):
-    day: str
-    failed: int = Field(..., ge=0)
-    resolved: int = Field(..., ge=0)
-
-
-class AdminErrorMonitoring(BaseModel):
-    rows: list[ErrorQueueRow] = Field(default_factory=list)
-    trend: list[ErrorTrendPoint] = Field(default_factory=list)
-    open_failures: int = Field(..., ge=0)
-    resolved_today: int = Field(..., ge=0)
-    sla: int = Field(..., ge=0, le=100)
-
-
-class AdminMonitoringDashboard(BaseModel):
-    summary: AdminSummary
-    performance: AdminPerformanceMonitoring
-    fairness: AdminFairnessMonitoring
-    drift: AdminDriftMonitoring
-    errors: AdminErrorMonitoring
-    last_updated: datetime
-
-
-class AdminSummaryResponse(BaseModel):
-    success: bool
-    summary: AdminSummary
-
-
-class AdminMonitoringResponse(BaseModel):
-    success: bool
-    dashboard: AdminMonitoringDashboard
-
-
 class ActivityLogEntry(BaseModel):
     log_id: UUID | str
     timestamp: datetime
     actor: UUID | str | None = None
-    event_type: str
+    actor_name: str | None = None
+    actor_email: str | None = None
+    actor_role: str | None = None
+    category: str
     action: str
     entity_type: str | None = None
     entity_id: UUID | str | None = None
     status: Literal["success", "warning", "failed"] = "success"
+    details: dict | None = None
+
+
+class ActivityEventRequest(BaseModel):
+    user_id: UUID
 
 
 class ActivityLogResponse(BaseModel):

@@ -1,0 +1,12 @@
+# Extra packages for scripts/train_framingham_score.py only (not needed to run the API).
+#
+# fasterrisk pins old versions of pandas / scikit-learn / matplotlib that would
+# break the main service, so install it WITHOUT its dependencies:
+#
+#   pip install -r requirements.txt
+#   pip install -r requirements-training.txt
+#   pip install --no-deps fasterrisk==0.1.10
+#
+# It works fine with the versions in requirements.txt. These are the extra
+# packages it imports that are not already installed:
+requests>=2.28.1,<3

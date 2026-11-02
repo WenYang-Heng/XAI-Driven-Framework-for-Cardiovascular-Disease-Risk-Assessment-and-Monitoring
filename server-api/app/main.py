@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import admin, batch, health, history, models, patients, predictions, profile
+from app.routers import activity, admin, batch, health, history, models, patients, predictions, profile
 
 from dotenv import load_dotenv
 
@@ -29,6 +29,7 @@ app.include_router(predictions.router)
 app.include_router(batch.router)
 app.include_router(history.router)
 app.include_router(admin.router)
+app.include_router(activity.router)
 app.include_router(profile.router)
 app.include_router(patients.router)
 
