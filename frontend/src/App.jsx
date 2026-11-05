@@ -7,13 +7,27 @@ import { supabase } from "./lib/supabase";
 import { API_BASE_URL } from "./pages/domain-expert/constants";
 
 function App() {
-  const [currentPage, setCurrentPage] = useState("login");
+  const [currentPage, setCurrentPage] = useState(() =>
+    isPasswordRecoveryUrl() ? "reset-password" : "login",
+  );
   const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
     let mounted = true;
 
+    function handleRecoveryUrl() {
+      if (isPasswordRecoveryUrl()) {
+        setCurrentUser(null);
+        setCurrentPage("reset-password");
+      }
+    }
+
     async function restoreSession() {
+      if (isPasswordRecoveryUrl()) {
+        setCurrentPage("reset-password");
+        return;
+      }
+
       const sessionResponse = await supabase?.auth.getSession();
       const user = sessionResponse?.data?.session?.user;
       if (!mounted || !user) {
@@ -37,8 +51,20 @@ function App() {
     }
 
     restoreSession();
+    window.addEventListener("hashchange", handleRecoveryUrl);
+    window.addEventListener("popstate", handleRecoveryUrl);
+    const authListener = supabase?.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") {
+        setCurrentUser(null);
+        setCurrentPage("reset-password");
+      }
+    });
+
     return () => {
       mounted = false;
+      window.removeEventListener("hashchange", handleRecoveryUrl);
+      window.removeEventListener("popstate", handleRecoveryUrl);
+      authListener?.data.subscription.unsubscribe();
     };
   }, []);
 
@@ -62,9 +88,15 @@ function App() {
 
   return (
     <AuthPage
+      initialMode={currentPage === "reset-password" ? "reset-password" : "login"}
       onAuthenticated={(role, user) => {
         setCurrentUser(user);
         setCurrentPage(pageForRole(role));
+      }}
+      onPasswordResetComplete={() => {
+        setCurrentUser(null);
+        setCurrentPage("login");
+        window.history.replaceState(null, "", window.location.pathname);
       }}
     />
   );
@@ -80,6 +112,11 @@ function toAppRole(role) {
     : role === "DOMAIN_EXPERT" || role === "domain-expert"
       ? "domain-expert"
       : "general-user";
+}
+
+function isPasswordRecoveryUrl() {
+  const params = new URLSearchParams(`${window.location.search}&${window.location.hash.slice(1)}`);
+  return params.get("type") === "recovery";
 }
 
 async function loadProfile(userId) {

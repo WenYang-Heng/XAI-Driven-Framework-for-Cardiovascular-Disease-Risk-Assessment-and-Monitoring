@@ -4,7 +4,7 @@ export type MainTab =
   | "xai"
   | "history";
 
-export type XaiTab = "overview" | "shap" | "lime" | "whatif" | "global";
+export type XaiTab = "overview" | "shap" | "lime" | "comparison";
 
 export type AssessmentMode = "single" | "batch";
 export type PatientReferenceMode = "csv_column" | "auto_generate" | "single_case";
@@ -14,6 +14,8 @@ export type AssessmentModel =
   | "XGBoost"
   | "Logistic Regression"
   | "Neural Network";
+
+export type AssessmentModelSelection = AssessmentModel | "";
 
 export type ModelKey =
   | "random_forest"
@@ -42,6 +44,34 @@ export type FeatureContribution = {
   value: number;
 };
 
+export type GlobalShapFeatureImportance = {
+  rank: number;
+  feature: string;
+  display_name?: string | null;
+  mean_abs_shap: number;
+};
+
+export type GlobalShapExplanation = {
+  global_explanation_id: string;
+  model_id: string;
+  dataset_name?: string | null;
+  samples_explained?: number | null;
+  explainer_type?: string | null;
+  explanation_scope?: "global" | "global_summary" | string | null;
+  feature_importance: GlobalShapFeatureImportance[];
+  beeswarm_data?: unknown;
+  dependence_data?: unknown;
+  summary_text?: string | null;
+  generation_status?: "pending" | "completed" | "failed" | "unavailable" | string | null;
+  generated_at?: string | null;
+  updated_at?: string | null;
+  ml_models?: {
+    model_name?: ModelKey | string | null;
+    display_name?: string | null;
+    model_version?: string | null;
+  } | null;
+};
+
 export type XaiExplanation = {
   shap: {
     base_value: number;
@@ -66,6 +96,8 @@ export type PredictionResult = {
   explanation: string[];
   model_version: string;
   xai: XaiExplanation;
+  assessment_date?: string | null;
+  created_at?: string | null;
 };
 
 export type PredictionApiResponse = {
@@ -139,6 +171,7 @@ export type HistoryItem = {
   risk_level: string;
   explanation?: string[];
   xai?: XaiExplanation | null;
+  input_features?: Record<string, number | string | null> | null;
   created_at: string;
   feedback_status?: "pending" | "reviewed";
 };
@@ -151,7 +184,7 @@ export type DomainExpertUser = {
 } | null;
 
 export type FeedbackForm = {
-  clinicianRiskLevel: "low" | "moderate" | "high";
+  assessmentRiskLevel: "low" | "moderate" | "high";
   agreementLevel: string;
   isClinicallyAcceptable: boolean;
   confidenceLevel: string;

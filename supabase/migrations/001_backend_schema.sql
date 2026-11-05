@@ -4,7 +4,7 @@ create table if not exists public.user_profiles (
     user_id uuid primary key,
     full_name text,
     email text unique,
-    role text not null check (role in ('ADMIN', 'DOMAIN_EXPERT', 'PATIENT')),
+    role text not null check (role in ('ADMIN', 'DOMAIN_EXPERT', 'GENERAL_USER')),
     created_at timestamp with time zone default now(),
     updated_at timestamp with time zone default now()
 );

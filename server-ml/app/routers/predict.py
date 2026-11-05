@@ -1,7 +1,10 @@
 from fastapi import APIRouter
 
 from app.schemas import (
+    GlobalShapRequest,
+    GlobalShapResponse,
     ModelListResponse,
+    ModelMetricsListResponse,
     ModelMetricsResponse,
     ModelName,
     NonDomainPredictionRequest,
@@ -10,7 +13,7 @@ from app.schemas import (
     RiskPredictionResponse,
 )
 from app.services.non_domain_model import comparison_table, predict_non_domain_risk
-from app.services.risk_model import get_model_metrics, list_models, predict_risk
+from app.services.risk_model import all_model_metrics, compute_global_shap, get_model_metrics, list_models, predict_risk
 
 
 router = APIRouter(tags=["prediction"])
@@ -26,6 +29,11 @@ def predict_non_domain(request: NonDomainPredictionRequest) -> NonDomainPredicti
     return predict_non_domain_risk(request)
 
 
+@router.post("/explanations/global-shap", response_model=GlobalShapResponse)
+def global_shap(request: GlobalShapRequest) -> GlobalShapResponse:
+    return compute_global_shap(request.model_name)
+
+
 @router.get("/models", response_model=ModelListResponse)
 def models() -> ModelListResponse:
     return list_models()
@@ -34,6 +42,11 @@ def models() -> ModelListResponse:
 @router.get("/models/non-domain/comparison")
 def non_domain_model_comparison() -> dict[str, str]:
     return {"table": comparison_table()}
+
+
+@router.get("/models/metrics", response_model=ModelMetricsListResponse)
+def models_metrics() -> ModelMetricsListResponse:
+    return all_model_metrics()
 
 
 @router.get("/models/{model_name}/metrics", response_model=ModelMetricsResponse)

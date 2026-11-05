@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { BarChart3, Brain, CheckCircle2, ClipboardList, FileSpreadsheet, Gauge, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { BarChart3, Brain, CheckCircle2, ClipboardList, Edit3, FileSpreadsheet, Gauge, ShieldCheck } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { AssessmentModel, BatchApiResponse, BatchApiRow, DomainExpertUser, FeedbackForm, ModelPerformance, PredictionResult } from '../types';
 import { API_BASE_URL } from '../constants';
@@ -337,15 +337,74 @@ export function AssessmentResult({
   onViewXai: () => void;
   currentUser?: DomainExpertUser;
 }) {
-  const [feedback, setFeedback] = useState<FeedbackForm>({
-    clinicianRiskLevel: "moderate",
+  const defaultFeedback: FeedbackForm = {
+    assessmentRiskLevel: "moderate",
     agreementLevel: "3",
     isClinicallyAcceptable: true,
     confidenceLevel: "3",
     feedbackComment: "",
     useForFutureRetraining: false,
-  });
+  };
+  const [feedback, setFeedback] = useState<FeedbackForm>(defaultFeedback);
+  const [hasSavedFeedback, setHasSavedFeedback] = useState(false);
+  const [isEditingFeedback, setIsEditingFeedback] = useState(true);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFeedback(defaultFeedback);
+    setHasSavedFeedback(false);
+    setIsEditingFeedback(true);
+    setFeedbackStatus(null);
+
+    if (!prediction?.result_id) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function loadFeedback() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/predictions/${prediction.result_id}/feedback`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          return;
+        }
+
+        const data = (await response.json()) as {
+          items: Array<{
+            clinician_risk_level?: "low" | "moderate" | "high" | null;
+            agreement_level?: number | null;
+            confidence_level?: number | null;
+            feedback_comment?: string | null;
+          }>;
+        };
+        const latest = data.items[0];
+        if (!latest) {
+          return;
+        }
+
+        setFeedback({
+          assessmentRiskLevel: latest.clinician_risk_level ?? "moderate",
+          agreementLevel: String(latest.agreement_level ?? 3),
+          isClinicallyAcceptable: true,
+          confidenceLevel: String(latest.confidence_level ?? 3),
+          feedbackComment: latest.feedback_comment ?? "",
+          useForFutureRetraining: false,
+        });
+        setHasSavedFeedback(true);
+        setIsEditingFeedback(false);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setFeedbackStatus("Unable to load saved feedback for this assessment.");
+        }
+      }
+    }
+
+    loadFeedback();
+    return () => controller.abort();
+  }, [prediction?.result_id]);
+
   if (!prediction) {
     return (
       <AssessmentEmptyState
@@ -455,93 +514,127 @@ export function AssessmentResult({
       </Card>
 
       <Card className="p-6">
-        <CardHeader
-          title="Clinician Feedback"
-          subtitle="Capture expert judgement for validation and future retraining evidence."
-        />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <CardHeader
+            title="Assessment Feedback"
+            subtitle="Capture expert judgement for validation and future retraining evidence."
+          />
+          {hasSavedFeedback && !isEditingFeedback ? (
+            <Button variant="secondary" onClick={() => setIsEditingFeedback(true)}>
+              <Edit3 className="h-4 w-4" />
+              Edit
+            </Button>
+          ) : null}
+        </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <SelectField
-            label="Clinician Risk Level"
-            value={feedback.clinicianRiskLevel}
-            onChange={(value) => setFeedback((current) => ({ ...current, clinicianRiskLevel: value as FeedbackForm["clinicianRiskLevel"] }))}
+            label="Assessment Risk Level"
+            value={feedback.assessmentRiskLevel}
+            disabled={!isEditingFeedback}
+            onChange={(value) => setFeedback((current) => ({ ...current, assessmentRiskLevel: value as FeedbackForm["assessmentRiskLevel"] }))}
             options={[
               ["low", "Low"],
               ["moderate", "Moderate"],
               ["high", "High"],
             ]}
           />
-          <SelectField
+          <SliderField
             label="Agreement Level"
             value={feedback.agreementLevel}
+            disabled={!isEditingFeedback}
             onChange={(value) => setFeedback((current) => ({ ...current, agreementLevel: value }))}
-            options={["1", "2", "3", "4", "5"].map((value) => [value, value])}
           />
-          <SelectField
+          <SliderField
             label="Confidence Level"
             value={feedback.confidenceLevel}
+            disabled={!isEditingFeedback}
             onChange={(value) => setFeedback((current) => ({ ...current, confidenceLevel: value }))}
-            options={["1", "2", "3", "4", "5"].map((value) => [value, value])}
           />
         </div>
         <div className="mt-4">
           <TextField
             label="Feedback Comment"
             value={feedback.feedbackComment}
+            disabled={!isEditingFeedback}
             onChange={(value) => setFeedback((current) => ({ ...current, feedbackComment: value }))}
           />
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2">
-          <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-            <input
-              type="checkbox"
-              checked={feedback.isClinicallyAcceptable}
-              onChange={(event) => setFeedback((current) => ({ ...current, isClinicallyAcceptable: event.target.checked }))}
-            />
-            Clinically acceptable
-          </label>
-          <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-            <input
-              type="checkbox"
-              checked={feedback.useForFutureRetraining}
-              onChange={(event) => setFeedback((current) => ({ ...current, useForFutureRetraining: event.target.checked }))}
-            />
-            Use for future retraining evidence
-          </label>
         </div>
         {feedbackStatus ? (
           <p className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-800">
             {feedbackStatus}
           </p>
         ) : null}
-        <Button
-          className="mt-5"
-          disabled={!displayPrediction.result_id || !currentUser?.id}
-          onClick={async () => {
-            if (!displayPrediction.result_id || !currentUser?.id) {
-              setFeedbackStatus("Sign in as a domain expert before submitting feedback.");
-              return;
-            }
-            const response = await fetch(`${API_BASE_URL}/api/predictions/${displayPrediction.result_id}/feedback`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                expert_id: currentUser.id,
-                clinician_risk_level: feedback.clinicianRiskLevel,
-                agreement_level: Number(feedback.agreementLevel),
-                is_clinically_acceptable: feedback.isClinicallyAcceptable,
-                confidence_level: Number(feedback.confidenceLevel),
-                feedback_comment: feedback.feedbackComment,
-                use_for_future_retraining: feedback.useForFutureRetraining,
-              }),
-            });
-            setFeedbackStatus(response.ok ? "Feedback saved for this assessment." : "Unable to save feedback.");
-          }}
-        >
-          <ClipboardList className="h-4 w-4" />
-          Submit Feedback
-        </Button>
+        {isEditingFeedback ? (
+          <Button
+            className="mt-5"
+            disabled={!displayPrediction.result_id || !currentUser?.id}
+            onClick={async () => {
+              if (!displayPrediction.result_id || !currentUser?.id) {
+                setFeedbackStatus("Sign in as a domain expert before submitting feedback.");
+                return;
+              }
+              const response = await fetch(`${API_BASE_URL}/api/predictions/${displayPrediction.result_id}/feedback`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  expert_id: currentUser.id,
+                  clinician_risk_level: feedback.assessmentRiskLevel,
+                  agreement_level: Number(feedback.agreementLevel),
+                  is_clinically_acceptable: null,
+                  confidence_level: Number(feedback.confidenceLevel),
+                  feedback_comment: feedback.feedbackComment,
+                  use_for_future_retraining: false,
+                }),
+              });
+              if (response.ok) {
+                setHasSavedFeedback(true);
+                setIsEditingFeedback(false);
+              }
+              setFeedbackStatus(response.ok ? "Feedback saved for this assessment." : "Unable to save feedback.");
+            }}
+          >
+            <ClipboardList className="h-4 w-4" />
+            {hasSavedFeedback ? "Save Feedback" : "Submit Feedback"}
+          </Button>
+        ) : null}
       </Card>
     </div>
+  );
+}
+
+function SliderField({
+  label,
+  value,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block rounded-2xl border border-slate-200 bg-white px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold text-slate-700">{label}</span>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{value}/5</span>
+      </div>
+      <input
+        className="mt-4 w-full accent-cyan-600 disabled:opacity-50"
+        type="range"
+        min="1"
+        max="5"
+        step="1"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <div className="mt-1 flex justify-between text-xs font-semibold text-slate-400">
+        <span>1</span>
+        <span>3</span>
+        <span>5</span>
+      </div>
+    </label>
   );
 }
 
