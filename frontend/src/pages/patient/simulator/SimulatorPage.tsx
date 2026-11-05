@@ -79,8 +79,8 @@ const presets: Preset[] = [
 ];
 
 function riskCategory(score: number): RiskCategory {
-  if (score < 10) return { label: "Low Risk", tone: "green" };
-  if (score < 20) return { label: "Moderate Risk", tone: "amber" };
+  if (score <= 30) return { label: "Low Risk", tone: "green" };
+  if (score <= 70) return { label: "Moderate Risk", tone: "amber" };
   return { label: "High Risk", tone: "red" };
 }
 

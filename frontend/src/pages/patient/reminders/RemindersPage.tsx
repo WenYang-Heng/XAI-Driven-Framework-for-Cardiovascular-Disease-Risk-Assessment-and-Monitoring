@@ -16,6 +16,7 @@ import { Card, CardHeader } from "../../../components/ui/Card";
 import {
   createReminder,
   deleteReminder,
+  sendTestReminderEmail,
   updateReminder,
   type ReminderRecord,
   type ReminderCustomMode,
@@ -49,9 +50,15 @@ const repeatOptions: { value: ReminderRepeat; label: string }[] = [
   ...daysOfWeek,
 ];
 
+const demoReminderEmailDelayMs = 5000;
+const demoReminderEmailTo = import.meta.env.VITE_DEMO_REMINDER_EMAIL_TO as string | undefined;
+const demoReminderRecipientName = "Wen Yang";
+
 export function RemindersPage({ userId, reminders, onRefresh }: RemindersPageProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState<ReminderRecord | null>(null);
+  const [deletingReminder, setDeletingReminder] = useState<ReminderRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const metrics = useMemo(() => reminderMetrics(reminders), [reminders]);
@@ -66,16 +73,24 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
     setIsCreateOpen(true);
   }
 
-  async function handleDelete(reminderId: string) {
+  async function handleDelete() {
     if (!userId) {
       setError("Sign in before deleting reminders.");
       return;
     }
+    if (!deletingReminder) {
+      return;
+    }
+    setIsDeleting(true);
+    setError(null);
     try {
-      await deleteReminder(reminderId, userId);
+      await deleteReminder(deletingReminder.reminder_id, userId);
       await onRefresh();
+      setDeletingReminder(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to delete reminder.");
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -96,7 +111,7 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
       <div>
         <Card className="p-6">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardHeader title="Upcoming reminders" subtitle="Edit, complete, or delete scheduled health actions." />
+            <CardHeader title="Upcoming reminders" subtitle="Edit or delete scheduled health actions." />
             <Button onClick={() => openCreateReminder()}>
               <Plus className="h-4 w-4" />
               New reminder
@@ -115,7 +130,7 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
                 <ReminderCard
                   key={reminder.reminder_id}
                   reminder={reminder}
-                  onDelete={() => handleDelete(reminder.reminder_id)}
+                  onDelete={() => setDeletingReminder(reminder)}
                   onEdit={() => openEditReminder(reminder)}
                 />
               ))
@@ -147,7 +162,67 @@ export function RemindersPage({ userId, reminders, onRefresh }: RemindersPagePro
           }}
         />
       ) : null}
+      {deletingReminder ? (
+        <DeleteReminderModal
+          reminder={deletingReminder}
+          isDeleting={isDeleting}
+          onClose={() => {
+            if (!isDeleting) {
+              setDeletingReminder(null);
+            }
+          }}
+          onConfirm={handleDelete}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function DeleteReminderModal({
+  reminder,
+  isDeleting,
+  onClose,
+  onConfirm,
+}: {
+  reminder: ReminderRecord;
+  isDeleting: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 px-4 py-8 backdrop-blur-sm">
+      <div className="w-full max-w-2xl rounded-[28px] bg-white p-7 text-center shadow-2xl md:p-10">
+        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-red-50 text-red-500">
+          <Trash2 className="h-6 w-6" />
+        </span>
+        <div className="mt-5">
+          <h2 className="text-xl font-bold tracking-tight text-slate-950 md:text-2xl">
+            Are you sure you want to delete this reminder?
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            This will delete <span className="font-semibold text-slate-900">{reminder.title}</span>.
+          </p>
+        </div>
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            disabled={isDeleting}
+            onClick={onClose}
+            className="inline-flex h-11 items-center justify-center rounded-2xl border border-slate-200 bg-slate-100 px-5 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={isDeleting}
+            onClick={onConfirm}
+            className="inline-flex h-11 items-center justify-center rounded-2xl border border-red-100 bg-red-100 px-5 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isDeleting ? "Deleting..." : "Delete reminder"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -200,9 +275,8 @@ function CreateReminderModal({
   }
 
   function handleDateTimeChange(nextDate: string, nextTime: string) {
-    const normalized = normalizeReminderDateTime(new Date(`${nextDate}T${nextTime}`));
-    setDate(formatDateInput(normalized));
-    setTime(formatTimeInput(normalized));
+    setDate(nextDate);
+    setTime(nextTime);
   }
 
   async function handleSave() {
@@ -214,8 +288,13 @@ function CreateReminderModal({
       setError("Enter a reminder title.");
       return;
     }
-    const selectedDateTime = normalizeReminderDateTime(new Date(`${date}T${time}`));
-    if (`${date}T${time}` !== `${formatDateInput(selectedDateTime)}T${formatTimeInput(selectedDateTime)}`) {
+    const rawDateTime = new Date(`${date}T${time}`);
+    if (!isReminderDateTimeValid(rawDateTime)) {
+      setError("Reminder time cannot be earlier than the current time.");
+      return;
+    }
+    const selectedDateTime = normalizeReminderDateTime(rawDateTime);
+    if (selectedDateTime.getTime() !== rawDateTime.getTime()) {
       setDate(formatDateInput(selectedDateTime));
       setTime(formatTimeInput(selectedDateTime));
     }
@@ -243,7 +322,12 @@ function CreateReminderModal({
       if (reminder) {
         await updateReminder(reminder.reminder_id, userId, payload);
       } else {
-        await createReminder(payload);
+        const createdReminder = await createReminder(payload);
+        window.setTimeout(() => {
+          void sendTestReminderEmail(createdReminder.reminder_id, userId, demoReminderEmailTo, demoReminderRecipientName).catch((caught) => {
+            console.error("Unable to send demo reminder email.", caught);
+          });
+        }, demoReminderEmailDelayMs);
       }
       await onCreated();
     } catch (caught) {
@@ -261,19 +345,15 @@ function CreateReminderModal({
           aria-label="Close reminder form"
           title="Close reminder form"
           onClick={onClose}
-          className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full border border-emerald-100 bg-white text-emerald-600 transition hover:bg-emerald-50"
+          className="absolute right-5 top-5 grid h-9 w-9 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
         >
           <X className="h-5 w-5" />
         </button>
 
         <div className="pr-10 text-center">
-          <p className="text-sm font-semibold text-cyan-700">Reminder management</p>
-          <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">
+          <h2 className="text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">
             {reminder ? "Edit health reminder" : "Create a health reminder"}
           </h2>
-          <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-500">
-            Schedule one practical action and receive an email when it is due.
-          </p>
         </div>
 
         <div className="mt-7 grid gap-4">
@@ -306,7 +386,7 @@ function CreateReminderModal({
           </div>
           {!isReminderDateTimeValid(new Date(`${date}T${time}`)) ? (
             <p className="text-sm font-medium text-red-600">
-              Reminder time must be later than the current time.
+              Reminder time cannot be earlier than the current time.
             </p>
           ) : null}
           <div>
@@ -632,17 +712,25 @@ function toggleDay(current: ReminderRepeat[], day: ReminderRepeat) {
 }
 
 function getMinimumReminderDateTime(now = new Date()) {
-  // Add a small buffer so a valid form does not expire while the user clicks save.
-  return new Date(now.getTime() + 60 * 1000);
+  return now;
 }
 
 function isReminderDateTimeValid(value: Date) {
-  return value.getTime() >= getMinimumReminderDateTime().getTime();
+  return toMinuteTimestamp(value) >= toMinuteTimestamp(new Date());
 }
 
 function normalizeReminderDateTime(value: Date) {
-  const minimum = getMinimumReminderDateTime();
-  return value.getTime() < minimum.getTime() ? minimum : value;
+  return value;
+}
+
+function toMinuteTimestamp(value: Date) {
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+    value.getHours(),
+    value.getMinutes(),
+  ).getTime();
 }
 
 function formatDateInput(value: Date) {

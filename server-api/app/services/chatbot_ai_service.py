@@ -23,6 +23,7 @@ def generate_ai_reply(
     page_context: dict[str, Any],
     conversation_history: list[ChatbotHistoryMessage],
     suggested_questions: list[str],
+    retrieved_knowledge: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not openai_available():
         raise RuntimeError("OPENAI_API_KEY is not configured")
@@ -40,8 +41,12 @@ def generate_ai_reply(
             "content": json.dumps(
                 {
                     "page_context": page_context,
+                    "trusted_knowledge": _format_knowledge(retrieved_knowledge or []),
                     "suggested_questions": suggested_questions,
-                    "instruction": "Use this context to answer the user's next message safely and simply.",
+                    "instruction": (
+                        "Use the page context and trusted knowledge to answer the user's next message safely and simply. "
+                        "If trusted knowledge is relevant, use it as grounding without over-quoting it."
+                    ),
                 },
                 default=str,
             ),
@@ -77,6 +82,7 @@ You are the Virtual Care Navigator for a cardiovascular disease risk assessment 
 Your role:
 - Help users understand the app, their assessment result, risk score, risk category, confidence level, action plan, action items, and reminders.
 - Use the provided page context.
+- Use trusted knowledge snippets when provided, but do not invent citations or facts outside the snippets.
 - Keep answers short, simple, and practical.
 - Explain that risk scores and projected guidance are estimates when relevant.
 - Suggest one clear next step when useful.
@@ -99,7 +105,22 @@ Safety rules:
 
 Response style:
 - Use simple language.
-- Keep most replies under 120 words.
+- Keep most replies under 100 words.
 - Use bullets only when helpful.
 - End with a useful next step or suggested question when appropriate.
 """.strip()
+
+
+def _format_knowledge(retrieved_knowledge: list[dict[str, Any]]) -> list[dict[str, str]]:
+    formatted: list[dict[str, str]] = []
+    for item in retrieved_knowledge[:3]:
+        formatted.append(
+            {
+                "topic": str(item.get("topic", "")),
+                "source_name": str(item.get("source_name", "")),
+                "source_url": str(item.get("source_url", "")),
+                "content": str(item.get("content", "")),
+                "safe_response_hint": str(item.get("safe_response_hint", "")),
+            }
+        )
+    return formatted

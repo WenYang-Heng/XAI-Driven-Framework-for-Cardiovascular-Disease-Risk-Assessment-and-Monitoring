@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { ArrowRight, Bell, ChevronDown, ChevronUp, ClipboardCheck, MoreHorizontal, ShieldCheck } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronUp, ClipboardCheck, ShieldCheck } from "lucide-react";
 import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader } from "../../../components/ui/Card";
@@ -23,7 +23,6 @@ export function PlanCard({ index, plan }: PlanCardProps) {
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-bold tracking-tight text-slate-900">{plan.title}</h3>
               <Badge tone={priorityTone(plan.priority)}>{plan.priority}</Badge>
-              <Badge tone="slate">{plan.difficulty}</Badge>
             </div>
             <p className="mt-3 leading-7 text-slate-600">{plan.reason}</p>
           </div>
@@ -54,14 +53,8 @@ export function PlanCard({ index, plan }: PlanCardProps) {
 
       <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
         <span className="text-sm font-semibold text-slate-500">
-          Focus: {plan.factor} - {plan.timeframe}
-          {plan.status ? ` - Status: ${plan.status.split("_").join(" ")}` : ""}
+          Focus: {plan.factor}
         </span>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="ghost" className="min-h-10 px-4 py-2 text-sm">
-            Set reminder
-          </Button>
-        </div>
       </div>
     </article>
   );
@@ -88,31 +81,13 @@ export function ActionPlanTable({ plans }: { plans: PlanItem[] }) {
                     {plan.title}
                   </h3>
                   <Badge tone={priorityTone(plan.priority)}>{plan.priority}</Badge>
-                  <Badge tone="slate">{plan.difficulty}</Badge>
                 </div>
-
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                  <span>#{index + 1}</span>
-                  <span>·</span>
-                  <span>{plan.factor}</span>
-                  <span>·</span>
-                  <span>{plan.timeframe}</span>
-                  <span>·</span>
-                  <span>{plan.status ? labelize(plan.status) : "Not started"}</span>
-                </div>
-
                 <div className="mt-4 border-t border-slate-100 pt-4">
                   <p className="line-clamp-2 leading-7 text-slate-600">{plan.reason}</p>
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                <IconButton label="Set reminder">
-                  <Bell className="h-4 w-4" />
-                </IconButton>
-                <IconButton label="More actions">
-                  <MoreHorizontal className="h-4 w-4" />
-                </IconButton>
                 <Button
                   variant="secondary"
                   className="min-h-10 px-4 py-2 text-sm"
@@ -136,26 +111,9 @@ export function ActionPlanTable({ plans }: { plans: PlanItem[] }) {
   );
 }
 
-function labelize(value: string) {
-  return value
-    .split("_")
-    .join(" ")
-    .split("-")
-    .join(" ")
-    .split(" ")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function ActionPlanDetails({ plan }: { plan: PlanItem }) {
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap gap-2 text-sm">
-        <Badge tone="cyan">Focus: {plan.factor}</Badge>
-        <Badge tone="slate">Timeframe: {plan.timeframe}</Badge>
-        <Badge tone="slate">Status: {plan.status ? labelize(plan.status) : "Not started"}</Badge>
-      </div>
-
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-4">
           <h4 className="text-sm font-semibold text-slate-900">Action details</h4>
@@ -185,19 +143,6 @@ function ActionPlanDetails({ plan }: { plan: PlanItem }) {
         </section>
       </div>
     </div>
-  );
-}
-
-function IconButton({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700"
-    >
-      {children}
-    </button>
   );
 }
 
@@ -263,3 +208,5 @@ export function ActionPlanSummary({ plans }: { plans: PlanItem[] }) {
     </Card>
   );
 }
+
+

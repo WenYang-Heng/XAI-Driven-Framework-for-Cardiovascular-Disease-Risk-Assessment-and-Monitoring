@@ -21,12 +21,22 @@ export async function sendChatbotMessage({
     body: JSON.stringify({
       message,
       page_context: pageContext,
-      conversation_history: conversationHistory.slice(-6),
+      conversation_history: conversationHistory.slice(-6).map((historyMessage) => ({
+        role: historyMessage.role,
+        content: historyMessage.content.slice(0, 500),
+      })),
     }),
   });
 
   if (!response.ok) {
-    throw new Error("Unable to send chatbot message.");
+    let detail = "Unable to send chatbot message.";
+    try {
+      const payload = await response.json();
+      detail = typeof payload.detail === "string" ? payload.detail : detail;
+    } catch {
+      // Keep the generic message if the backend does not return JSON.
+    }
+    throw new Error(detail);
   }
 
   return response.json() as Promise<{

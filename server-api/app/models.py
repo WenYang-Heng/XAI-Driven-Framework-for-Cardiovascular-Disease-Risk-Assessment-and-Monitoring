@@ -558,8 +558,8 @@ class ReminderRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_repeat_settings(self) -> "ReminderRequest":
-        if _parse_reminder_datetime(self.reminder_time) <= datetime.now(UTC):
-            raise ValueError("reminder_time must be later than the current time")
+        if _is_before_current_minute(_parse_reminder_datetime(self.reminder_time)):
+            raise ValueError("reminder_time must not be earlier than the current time")
         if self.repeat_interval != "custom":
             return self
         if self.custom_mode == "interval":
@@ -590,8 +590,19 @@ class ReminderUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_reminder_time(self) -> "ReminderUpdateRequest":
-        if self.reminder_time and _parse_reminder_datetime(self.reminder_time) <= datetime.now(UTC):
-            raise ValueError("reminder_time must be later than the current time")
+        if self.reminder_time and _is_before_current_minute(_parse_reminder_datetime(self.reminder_time)):
+            raise ValueError("reminder_time must not be earlier than the current time")
+        return self
+
+
+class ReminderTestEmailRequest(BaseModel):
+    to_email: str | None = Field(None, max_length=254)
+    recipient_name: str | None = Field(None, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_to_email(self) -> "ReminderTestEmailRequest":
+        if self.to_email and ("@" not in self.to_email or "." not in self.to_email.split("@")[-1]):
+            raise ValueError("to_email must be a valid email address")
         return self
 
 
@@ -621,3 +632,9 @@ def _parse_reminder_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _is_before_current_minute(value: datetime) -> bool:
+    selected_minute = value.replace(second=0, microsecond=0)
+    current_minute = datetime.now(UTC).replace(second=0, microsecond=0)
+    return selected_minute < current_minute

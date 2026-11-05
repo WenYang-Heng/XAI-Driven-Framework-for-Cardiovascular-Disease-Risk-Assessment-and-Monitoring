@@ -781,6 +781,51 @@ def patient_assessment_history(user_id: str) -> list[dict[str, Any]]:
     return sorted(items, key=lambda item: item.get("created_at", ""), reverse=True)
 
 
+async def delete_patient_assessment(assessment_id: str, user_id: str) -> bool:
+    if database_enabled():
+        rows = _query_database(
+            """
+            select assessment_id
+            from public.assessments
+            where assessment_id = %(assessment_id)s
+              and user_id = %(user_id)s
+            limit 1
+            """,
+            {"assessment_id": assessment_id, "user_id": user_id},
+        )
+        if not rows:
+            return False
+
+        _query_database(
+            """
+            delete from public.assessments_input
+            where assessment_id = %(assessment_id)s
+            """,
+            {"assessment_id": assessment_id},
+        )
+        rows = _query_database(
+            """
+            delete from public.assessments
+            where assessment_id = %(assessment_id)s
+              and user_id = %(user_id)s
+            returning assessment_id
+            """,
+            {"assessment_id": assessment_id, "user_id": user_id},
+        )
+        return bool(rows)
+
+    before = len(_assessments)
+    _assessments[:] = [
+        assessment for assessment in _assessments
+        if not (assessment.get("assessment_id") == assessment_id and assessment.get("user_id") == user_id)
+    ]
+    _assessment_inputs[:] = [
+        assessment_input for assessment_input in _assessment_inputs
+        if assessment_input.get("assessment_id") != assessment_id
+    ]
+    return len(_assessments) < before
+
+
 def get_patient_assessment_with_input(assessment_id: str, user_id: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     if database_enabled():
         assessment_rows = _query_database(
@@ -1120,10 +1165,47 @@ async def process_due_reminder_emails(limit: int = 25, dry_run: bool = False) ->
     }
 
 
+async def send_test_reminder_email(
+    reminder_id: str,
+    user_id: str,
+    to_email: str | None = None,
+    recipient_name: str | None = None,
+) -> dict[str, Any] | None:
+    reminder = get_reminder(reminder_id, user_id)
+    if not reminder:
+        return None
+
+    profile = get_user_profile(user_id) or {}
+    recipient = to_email or profile.get("email")
+    if not recipient:
+        raise ValueError("No email address is available for this user.")
+
+    reminder_with_profile = {
+        **reminder,
+        "user_email": recipient,
+        "user_full_name": recipient_name or profile.get("full_name"),
+    }
+    subject = f"Reminder: {reminder.get('title', 'Health reminder')}"
+    body = _reminder_email_body(reminder_with_profile)
+    email_result = await send_reminder_email(recipient, subject, body)
+    await log_activity(user_id, "SEND_TEST_REMINDER_EMAIL", "reminders", reminder_id)
+
+    return {
+        "reminder_id": reminder_id,
+        "status": "sent",
+        "provider": email_result.provider,
+        "message_id": email_result.message_id,
+        "to": recipient,
+        "subject": subject,
+        "body": body,
+    }
+
+
 def _reminder_email_body(reminder: dict[str, Any]) -> str:
     name = reminder.get("user_full_name") or "there"
     description = reminder.get("description")
     linked_item = reminder.get("linked_item")
+    repeat_summary = _format_repeat_summary(reminder)
     details = []
     if description:
         details.append(description)
@@ -1136,9 +1218,32 @@ def _reminder_email_body(reminder: dict[str, Any]) -> str:
         "This is your CardioXAI reminder:\n\n"
         f"{reminder['title']}\n\n"
         f"Scheduled time: {reminder['reminder_time']}\n\n"
+        f"Repeat: {repeat_summary}\n\n"
         f"{details_text}\n\n"
         "This reminder supports your self-management plan and does not replace medical advice or prescribed treatment."
     )
+
+
+def _format_repeat_summary(reminder: dict[str, Any]) -> str:
+    repeat = reminder.get("repeat_interval") or "once"
+    if repeat == "once":
+        return "Once"
+    if repeat == "daily":
+        return "Daily"
+    if repeat == "weekly":
+        return "Weekly"
+    if repeat in WEEKDAY_INDEX:
+        return repeat.capitalize()
+    if repeat == "custom" and reminder.get("custom_mode") == "interval":
+        interval = reminder.get("custom_interval") or 1
+        unit = reminder.get("custom_unit") or "days"
+        unit_label = unit[:-1] if interval == 1 and unit.endswith("s") else unit
+        return f"Every {interval} {unit_label}"
+    if repeat == "custom" and reminder.get("custom_mode") == "selected_days":
+        days = reminder.get("selected_days") or []
+        if days:
+            return "Custom days: " + ", ".join(str(day).capitalize() for day in days)
+    return "Custom"
 
 
 def _next_reminder_time(reminder: dict[str, Any]) -> str | None:

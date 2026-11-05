@@ -103,3 +103,28 @@ export async function deleteReminder(reminderId: string, userId: string) {
     throw new Error("Unable to delete reminder.");
   }
 }
+
+export async function sendTestReminderEmail(reminderId: string, userId: string, toEmail?: string, recipientName?: string) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/reminders/${encodeURIComponent(reminderId)}/send-test-email?user_id=${encodeURIComponent(userId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_email: toEmail || null, recipient_name: recipientName || null }),
+    },
+  );
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Unable to send test reminder email.");
+  }
+  return response.json() as Promise<{
+    success: boolean;
+    reminder_id: string;
+    status: "sent";
+    provider: string;
+    message_id?: string | null;
+    to: string;
+    subject: string;
+    body: string;
+  }>;
+}

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models import PatientAssessmentRequest, PatientSimulationRequest
 from app.services import ml_client, patient_risk, storage
@@ -37,6 +37,14 @@ def list_patient_assessment_history(user_id: str) -> dict:
         "success": True,
         "items": storage.patient_assessment_history(user_id),
     }
+
+
+@router.delete("/{assessment_id}")
+async def delete_patient_assessment(assessment_id: str, user_id: str = Query(...)) -> dict:
+    deleted = await storage.delete_patient_assessment(assessment_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Assessment not found.")
+    return {"success": True}
 
 
 @router.post("/simulate")

@@ -20,12 +20,10 @@ export type AssessmentForm = {
   glucoseInputType: "exact" | "category" | "unknown";
   glucose: number;
   glucoseCategory: "normal" | "above_normal" | "well_above_normal";
-  diabetes: "no" | "prediabetes" | "yes" | "unsure";
   smoking: "no" | "yes";
   activity: "no" | "yes";
   weightKg: number;
   alcoholIntake: "yes" | "no";
-  symptoms: "none" | "mild" | "urgent";
 };
 
 export const fallbackRiskFactors: RiskFactor[] = [
@@ -63,18 +61,16 @@ export const initialAssessment: AssessmentForm = {
   systolicBp: 132,
   diastolicBp: 84,
   bpCategory: "above_normal",
-  cholesterolInputType: "exact",
+  cholesterolInputType: "category",
   cholesterol: 210,
   cholesterolCategory: "above_normal",
   glucoseInputType: "category",
   glucose: 95,
   glucoseCategory: "normal",
-  diabetes: "unsure",
   smoking: "no",
   activity: "yes",
   weightKg: 70,
   alcoholIntake: "no",
-  symptoms: "none",
 };
 
 export function calculateDemoRisk(form: AssessmentForm) {
@@ -84,11 +80,9 @@ export function calculateDemoRisk(form: AssessmentForm) {
   score += form.bpInputType === "exact" ? Math.max(0, (form.systolicBp - 115) * 0.13) : 1.2;
   score += form.cholesterolInputType === "exact" ? Math.max(0, (form.cholesterol - 180) * 0.035) : 0.9;
   score += glucoseCategory(form) === "well_above_normal" ? 3.3 : glucoseCategory(form) === "above_normal" ? 1.4 : 0;
-  score += form.diabetes === "yes" ? 3.2 : form.diabetes === "prediabetes" ? 1.5 : form.diabetes === "unsure" ? 0.7 : 0;
   score += form.smoking === "yes" ? 4.4 : 0;
   score += form.activity === "no" ? 3.2 : 0;
   score += bmi(form) >= 30 ? 2.4 : bmi(form) >= 25 ? 1.2 : 0;
-  score += form.symptoms === "urgent" ? 5 : form.symptoms === "mild" ? 1.5 : 0;
 
   return Math.min(38, Math.max(5, Math.round(score * 10) / 10));
 }
@@ -151,13 +145,13 @@ export function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.diabetes === "yes" || glucoseCategory(form) === "well_above_normal") {
+  if (glucoseCategory(form) === "well_above_normal") {
     factors.push({
       name: "Blood Sugar Control",
       type: "Modifiable",
       impact: "High impact",
       description:
-        "High blood sugar or diabetes can increase the risk of blood vessel and heart problems over time.",
+        "High blood sugar can increase the risk of blood vessel and heart problems over time.",
       action: "Track glucose if advised and discuss care targets with a healthcare professional.",
     });
   }

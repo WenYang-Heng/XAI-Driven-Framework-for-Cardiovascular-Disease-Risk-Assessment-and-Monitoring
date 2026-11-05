@@ -1,8 +1,11 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Eye, Trash2 } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "../../../components/ui/Badge";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader } from "../../../components/ui/Card";
+import { RiskScoreCard } from "../risk-explorer/RiskScoreCard";
+import { TopRiskFactors } from "../risk-explorer/TopRiskFactors";
+import type { RiskCategory, RiskFactor } from "../risk-explorer/types";
 
 type StatusTone = "green" | "amber" | "red";
 
@@ -14,6 +17,10 @@ export type AssessmentHistoryItem = {
   risk_category: "low" | "moderate" | "high";
   confidence_level: "low" | "medium" | "high";
   prediction_method?: string;
+  age?: number | null;
+  sex?: number | string | null;
+  height_cm?: number | null;
+  weight?: number | null;
   estimated_inputs?: {
     systolic_bp?: number | null;
     total_cholesterol?: number | null;
@@ -25,6 +32,13 @@ export type AssessmentHistoryItem = {
   cholesterol_input_type?: string;
   total_cholesterol?: number | null;
   cholesterol_category?: string | null;
+  glucose_input_type?: string | null;
+  glucose?: number | null;
+  glucose_category?: string | null;
+  diabetes_history?: string | null;
+  smoking_status?: string | null;
+  activity_level?: string | null;
+  alcohol_intake?: string | null;
   explanation?: PatientExplanation;
 };
 
@@ -56,10 +70,30 @@ export type XaiTopFactor = {
 
 type AssessmentHistoryPageProps = {
   items: AssessmentHistoryItem[];
+  currentRisk: number;
+  currentCategory: RiskCategory;
+  selectedAssessmentId?: string | null;
+  hasAssessment: boolean;
+  isAssessmentHistoryLoading?: boolean;
+  riskFactors: RiskFactor[];
   onStartAssessment: () => void;
+  onViewAssessment: (item: AssessmentHistoryItem) => void;
+  onDeleteAssessment: (item: AssessmentHistoryItem) => void;
 };
 
-export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHistoryPageProps) {
+export function AssessmentHistoryPage({
+  items,
+  currentRisk,
+  currentCategory,
+  selectedAssessmentId,
+  hasAssessment,
+  isAssessmentHistoryLoading = false,
+  riskFactors,
+  onStartAssessment,
+  onViewAssessment,
+  onDeleteAssessment,
+}: AssessmentHistoryPageProps) {
+  const currentAssessment = items.find((item) => item.assessment_id === selectedAssessmentId) ?? items[0];
   const sortedItems = [...items].sort(
     (a, b) =>
       new Date(a.assessed_at ?? a.created_at ?? 0).getTime() -
@@ -72,15 +106,40 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
     index: index + 1,
   }));
 
+  if (isAssessmentHistoryLoading) {
+    return (
+      <section className="grid gap-6">
+        <h2 className="text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">Risk Explorer</h2>
+        <Card className="p-6">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+            <div>
+              <h3 className="text-xl font-bold tracking-tight text-slate-950">
+                Loading your latest assessment
+              </h3>
+              <p className="mt-3 leading-7 text-slate-600">
+                Checking your saved assessment history before showing your result.
+              </p>
+            </div>
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-cyan-100 border-t-cyan-600" />
+          </div>
+        </Card>
+      </section>
+    );
+  }
+
   return (
     <section className="grid gap-6">
-      <SectionTitle
-        label="Assessment history"
-        title="Previous patient risk estimates"
-        description="Saved assessments are shown as a risk-score trend and a detailed table for comparison."
-      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">Risk Explorer</h2>
+        {hasAssessment && items.length > 0 ? (
+          <Button onClick={onStartAssessment}>
+            Retake assessment
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        ) : null}
+      </div>
 
-      {items.length === 0 ? (
+      {!hasAssessment || items.length === 0 ? (
         <Card className="p-6">
           <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
             <div>
@@ -97,18 +156,14 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
         </Card>
       ) : (
         <>
-          <Card className="grid gap-4 p-6 md:grid-cols-[1fr_auto] md:items-center">
-            <div>
-              <h3 className="text-xl font-bold tracking-tight text-slate-950">Take a new assessment</h3>
-              <p className="mt-2 leading-7 text-slate-600">
-                Retake the assessment when your health details change or you want a fresh risk estimate.
-              </p>
-            </div>
-            <Button onClick={onStartAssessment}>
-              Retake assessment
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </Card>
+          <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+            <RiskScoreCard
+              score={currentRisk}
+              category={currentCategory}
+              lastAssessedAt={currentAssessment?.assessed_at ?? currentAssessment?.created_at}
+            />
+            <TopRiskFactors factors={riskFactors} />
+          </div>
 
           <Card className="p-6">
             <CardHeader
@@ -152,22 +207,24 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
           <Card className="p-6">
             <CardHeader title="Assessment records" subtitle="Compare saved patient assessment results." />
             <div className="mt-5 overflow-hidden rounded-[20px] border border-slate-200">
-              <table className="w-full min-w-[900px] border-collapse bg-white text-left text-sm">
+              <table className="w-full min-w-[760px] border-collapse bg-white text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <tr>
                     <th className="px-5 py-4 font-bold">Date</th>
+                    <th className="px-5 py-4 font-bold">Time</th>
                     <th className="px-5 py-4 font-bold">Risk Score</th>
                     <th className="px-5 py-4 font-bold">Risk Category</th>
-                    <th className="px-5 py-4 font-bold">Confidence</th>
-                    <th className="px-5 py-4 font-bold">Method</th>
-                    <th className="px-5 py-4 font-bold">Summary</th>
+                    <th className="px-5 py-4 text-right font-bold">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {[...items].map((item) => (
-                    <tr key={item.assessment_id} className="align-top hover:bg-slate-50/70">
+                    <tr key={item.assessment_id} className="align-middle hover:bg-slate-50/70">
                       <td className="px-5 py-4 text-slate-600">
                         {formatDate(item.assessed_at ?? item.created_at)}
+                      </td>
+                      <td className="px-5 py-4 text-slate-600">
+                        {formatTime(item.assessed_at ?? item.created_at)}
                       </td>
                       <td className="px-5 py-4 font-semibold text-slate-950">
                         {Math.round(Number(item.risk_score ?? 0) * 1000) / 10}%
@@ -176,13 +233,18 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
                         <Badge tone={riskTone(item.risk_category)}>{riskLevelLabel(item.risk_category)}</Badge>
                       </td>
                       <td className="px-5 py-4">
-                        <Badge tone={confidenceTone(item.confidence_level)}>{labelize(item.confidence_level)}</Badge>
-                      </td>
-                      <td className="px-5 py-4 text-slate-600">
-                        {methodLabel(item.prediction_method)}
-                      </td>
-                      <td className="max-w-lg px-5 py-4 leading-6 text-slate-600">
-                        {explanationSummary(item.explanation)}
+                        <div className="flex justify-end gap-2">
+                          <AssessmentRecordActionButton
+                            tone="view"
+                            label="View"
+                            onClick={() => onViewAssessment(item)}
+                          />
+                          <AssessmentRecordActionButton
+                            tone="delete"
+                            label="Delete"
+                            onClick={() => onDeleteAssessment(item)}
+                          />
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -194,23 +256,6 @@ export function AssessmentHistoryPage({ items, onStartAssessment }: AssessmentHi
       )}
     </section>
   );
-}
-
-function explanationSummary(explanation?: PatientExplanation) {
-  if (Array.isArray(explanation)) {
-    return explanation[0] ?? "No explanation saved.";
-  }
-  return explanation?.summary?.[0] ?? explanation?.xai?.top_factors?.[0]?.plain_language ?? "No explanation saved.";
-}
-
-function confidenceTone(level: string): "green" | "amber" | "red" {
-  if (level === "high") {
-    return "green";
-  }
-  if (level === "medium") {
-    return "amber";
-  }
-  return "red";
 }
 
 function riskTone(level?: string): StatusTone {
@@ -230,33 +275,21 @@ function riskLevelLabel(level?: string) {
   return `${level.charAt(0).toUpperCase()}${level.slice(1)} Risk`;
 }
 
-function labelize(value: string) {
-  return value
-    .split("_")
-    .join(" ")
-    .split("-")
-    .join(" ")
-    .split(" ")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function formatDateTime(value?: string) {
-  if (!value) {
-    return "Unknown date";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
 function formatDate(value?: string) {
   if (!value) {
     return "Unknown date";
   }
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
+  }).format(new Date(value));
+}
+
+function formatTime(value?: string) {
+  if (!value) {
+    return "Unknown time";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    timeStyle: "short",
   }).format(new Date(value));
 }
 
@@ -270,32 +303,29 @@ function formatShortDate(value?: string) {
   }).format(new Date(value));
 }
 
-function methodLabel(value?: string) {
-  if (!value) {
-    return "Patient screening";
-  }
-  if (value.includes("simulation")) {
-    return "Lifestyle simulation";
-  }
-  return "Patient screening";
-}
-
-function SectionTitle({
+function AssessmentRecordActionButton({
+  tone,
   label,
-  title,
-  description,
+  onClick,
 }: {
+  tone: "view" | "delete";
   label: string;
-  title: string;
-  description: string;
+  onClick: () => void;
 }) {
+  const Icon = tone === "view" ? Eye : Trash2;
+  const toneClassName =
+    tone === "view"
+      ? "border-blue-100 bg-blue-50 text-blue-700 hover:border-blue-200 hover:bg-blue-100"
+      : "border-red-100 bg-red-50 text-red-700 hover:border-red-200 hover:bg-red-100";
+
   return (
-    <div className="max-w-3xl">
-      <p className="text-sm font-semibold text-cyan-700">{label}</p>
-      <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-        {title}
-      </h2>
-      <p className="mt-4 text-base leading-7 text-slate-600">{description}</p>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex h-10 items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-semibold transition ${toneClassName}`}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
   );
 }

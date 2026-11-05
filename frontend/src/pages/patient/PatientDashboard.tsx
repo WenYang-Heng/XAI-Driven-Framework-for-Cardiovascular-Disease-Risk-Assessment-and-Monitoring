@@ -21,13 +21,11 @@ import { ChatbotContextProvider, useChatbotContext, type ChatbotPageContext } fr
 import { VirtualCareChatbot } from "./chatbot/VirtualCareChatbot";
 import { RemindersPage } from "./reminders/RemindersPage";
 import { fetchReminders, type ReminderRecord } from "./reminders/reminderApi";
-import { RiskExplorerPage } from "./risk-explorer/RiskExplorerPage";
 import { SimulatorPage } from "./simulator/SimulatorPage";
 
 type PatientTab =
   | "assessment"
   | "risk"
-  | "history"
   | "action"
   | "simulator"
   | "reminders"
@@ -74,12 +72,10 @@ type AssessmentForm = {
   glucoseInputType: "exact" | "category" | "unknown";
   glucose: number;
   glucoseCategory: "normal" | "above_normal" | "well_above_normal";
-  diabetes: "no" | "prediabetes" | "yes" | "unsure";
   smoking: "no" | "yes";
   activity: "no" | "yes";
   weightKg: number;
   alcoholIntake: "yes" | "no";
-  symptoms: "none" | "mild" | "urgent";
 };
 
 type PatientPrediction = {
@@ -103,11 +99,9 @@ type CurrentUser = {
 
 const navItems: NavItem[] = [
   { id: "risk", label: "Risk Explorer", icon: HeartPulse },
-  { id: "history", label: "Assessment History", icon: ClipboardList },
   { id: "action", label: "Action Plan", icon: ClipboardList },
   { id: "simulator", label: "What-If Simulator", icon: TrendingDown },
   { id: "reminders", label: "Reminders", icon: Bell },
-  { id: "navigator", label: "Care Navigator", icon: MessageCircle },
 ];
 
 const riskFactors: RiskFactor[] = [
@@ -138,8 +132,8 @@ const riskFactors: RiskFactor[] = [
 ];
 
 function riskCategory(score: number): RiskCategory {
-  if (score < 25) return { label: "Low Risk", tone: "green" };
-  if (score < 55) return { label: "Moderate Risk", tone: "amber" };
+  if (score <= 30) return { label: "Low Risk", tone: "green" };
+  if (score <= 70) return { label: "Moderate Risk", tone: "amber" };
   return { label: "High Risk", tone: "red" };
 }
 
@@ -148,13 +142,11 @@ function calculateDemoRisk(form: AssessmentForm) {
   score += Math.max(0, (form.age - 35) * 0.28);
   score += form.sex === "male" ? 1.8 : 0.8;
   score += form.bpInputType === "exact" ? Math.max(0, (form.systolicBp - 115) * 0.13) : 1.2;
-  score += form.cholesterolInputType === "exact" ? Math.max(0, (form.cholesterol - 180) * 0.035) : 0.9;
+  score += form.cholesterolCategory === "well_above_normal" ? 2.6 : form.cholesterolCategory === "above_normal" ? 1.2 : 0;
   score += glucoseCategory(form) === "well_above_normal" ? 3.3 : glucoseCategory(form) === "above_normal" ? 1.4 : 0;
-  score += form.diabetes === "yes" ? 3.2 : form.diabetes === "prediabetes" ? 1.5 : form.diabetes === "unsure" ? 0.7 : 0;
   score += form.smoking === "yes" ? 4.4 : 0;
   score += form.activity === "no" ? 3.2 : 0;
   score += bmi(form) >= 30 ? 2.4 : bmi(form) >= 25 ? 1.2 : 0;
-  score += form.symptoms === "urgent" ? 5 : form.symptoms === "mild" ? 1.5 : 0;
 
   return Math.min(38, Math.max(5, Math.round(score * 10) / 10));
 }
@@ -184,7 +176,7 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.cholesterolInputType === "exact" && form.cholesterol >= 200) {
+  if (form.cholesterolCategory !== "normal") {
     factors.push({
       name: "Cholesterol",
       type: "Modifiable",
@@ -217,7 +209,7 @@ function buildRiskFactors(form: AssessmentForm): RiskFactor[] {
     });
   }
 
-  if (form.diabetes === "yes" || glucoseCategory(form) === "well_above_normal") {
+  if (glucoseCategory(form) === "well_above_normal") {
     factors.push({
       name: "Blood Sugar Control",
       type: "Modifiable",
@@ -247,16 +239,16 @@ function buildSavedRiskFactors(explanation: PatientExplanation | undefined, fall
     const increasedRiskFactors = explanation.xai.top_factors.filter((factor) => factor.direction === "increased_risk");
     const displayFactors = increasedRiskFactors.length ? increasedRiskFactors : explanation.xai.top_factors;
 
-    return displayFactors
-      .slice(0, 5)
-      .map((factor, index) =>
-        xaiFactorToRiskFactor(
-          factor,
-          explanation.xai?.method,
-          explanation.xai?.supporting_method,
-          index === 0 ? explanation.xai?.consistency_note : undefined,
-        ),
-      );
+    const mappedFactors = displayFactors.map((factor, index) =>
+      xaiFactorToRiskFactor(
+        factor,
+        explanation.xai?.method,
+        explanation.xai?.supporting_method,
+        index === 0 ? explanation.xai?.consistency_note : undefined,
+      ),
+    );
+
+    return dedupeRiskFactors(mappedFactors).slice(0, 5);
   }
 
   const messages = Array.isArray(explanation) ? explanation : explanation?.summary;
@@ -281,7 +273,19 @@ function buildSavedRiskFactors(explanation: PatientExplanation | undefined, fall
     })
     .filter((factor) => factor.name !== "Model Factor");
 
-  return mappedFactors.length ? mappedFactors : fallback;
+  return mappedFactors.length ? dedupeRiskFactors(mappedFactors) : fallback;
+}
+
+function dedupeRiskFactors(factors: RiskFactor[]) {
+  const seen = new Set<string>();
+  return factors.filter((factor) => {
+    const key = factor.name.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function xaiFactorToRiskFactor(
@@ -379,12 +383,12 @@ function formToPatientAssessmentPayload(form: AssessmentForm, userId: string) {
     bp_input_type: form.bpInputType,
     systolic_bp: form.bpInputType === "exact" ? form.systolicBp : null,
     diastolic_bp: form.bpInputType === "exact" ? form.diastolicBp : null,
-    bp_category: form.bpInputType === "category" ? form.bpCategory : null,
-    cholesterol_input_type: form.cholesterolInputType,
-    total_cholesterol: form.cholesterolInputType === "exact" ? form.cholesterol : null,
-    cholesterol_category: form.cholesterolInputType === "category" ? form.cholesterolCategory : null,
-    glucose_category: form.glucoseInputType === "unknown" ? "unknown" : glucoseCategory(form),
-    diabetes_history: form.diabetes,
+    bp_category: null,
+    cholesterol_input_type: "category",
+    total_cholesterol: null,
+    cholesterol_category: form.cholesterolCategory,
+    glucose_category: form.glucoseCategory,
+    diabetes_history: "unsure",
     smoking_status: form.smoking,
     activity_level: form.activity === "yes" ? "high" : "low",
     weight: form.weightKg,
@@ -398,22 +402,20 @@ function createAssessmentDraft(): AssessmentForm {
     age: 45,
     sex: "female",
     heightCm: 165,
-    bpInputType: "unknown",
+    bpInputType: "exact",
     systolicBp: 120,
     diastolicBp: 80,
     bpCategory: "normal",
-    cholesterolInputType: "unknown",
+    cholesterolInputType: "category",
     cholesterol: 180,
     cholesterolCategory: "normal",
-    glucoseInputType: "unknown",
+    glucoseInputType: "category",
     glucose: 95,
     glucoseCategory: "normal",
-    diabetes: "unsure",
     smoking: "no",
     activity: "yes",
     weightKg: 70,
     alcoholIntake: "no",
-    symptoms: "none",
   };
 }
 
@@ -424,6 +426,15 @@ async function loadAssessmentHistory(userId: string): Promise<AssessmentHistoryI
   }
   const data = await response.json();
   return data.items ?? [];
+}
+
+async function deletePatientAssessment(assessmentId: string, userId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/patient-assessments/${assessmentId}?user_id=${userId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error("Unable to delete assessment.");
+  }
 }
 
 async function loadReminders(userId: string): Promise<ReminderRecord[]> {
@@ -445,6 +456,49 @@ function historyItemToPrediction(item: AssessmentHistoryItem): PatientPrediction
   };
 }
 
+function historyItemToAssessmentForm(item: AssessmentHistoryItem): AssessmentForm {
+  const draft = createAssessmentDraft();
+  return {
+    ...draft,
+    age: Number(item.age ?? draft.age),
+    sex: normalizeSex(item.sex),
+    heightCm: Number(item.height_cm ?? draft.heightCm),
+    weightKg: Number(item.weight ?? draft.weightKg),
+    bpInputType: normalizeInputType(item.bp_input_type, draft.bpInputType),
+    systolicBp: Number(item.systolic_bp ?? draft.systolicBp),
+    diastolicBp: Number(item.diastolic_bp ?? draft.diastolicBp),
+    bpCategory: normalizeCategory(item.bp_category, draft.bpCategory),
+    cholesterolInputType: normalizeInputType(item.cholesterol_input_type, draft.cholesterolInputType),
+    cholesterol: Number(item.total_cholesterol ?? draft.cholesterol),
+    cholesterolCategory: normalizeCategory(item.cholesterol_category, draft.cholesterolCategory),
+    glucoseInputType: normalizeInputType(item.glucose_input_type, item.glucose_category ? "category" : draft.glucoseInputType),
+    glucose: Number(item.glucose ?? draft.glucose),
+    glucoseCategory: normalizeCategory(item.glucose_category, draft.glucoseCategory),
+    smoking: normalizeYesNo(item.smoking_status, draft.smoking),
+    activity: normalizeYesNo(item.activity_level, draft.activity),
+    alcoholIntake: normalizeYesNo(item.alcohol_intake, draft.alcoholIntake),
+  };
+}
+
+function normalizeSex(value: AssessmentHistoryItem["sex"]): AssessmentForm["sex"] {
+  if (value === "male" || value === 1 || value === "1") {
+    return "male";
+  }
+  return "female";
+}
+
+function normalizeInputType(value: unknown, fallback: AssessmentForm["bpInputType"]): AssessmentForm["bpInputType"] {
+  return value === "exact" || value === "category" || value === "unknown" ? value : fallback;
+}
+
+function normalizeCategory(value: unknown, fallback: AssessmentForm["bpCategory"]): AssessmentForm["bpCategory"] {
+  return value === "normal" || value === "above_normal" || value === "well_above_normal" ? value : fallback;
+}
+
+function normalizeYesNo(value: unknown, fallback: "yes" | "no"): "yes" | "no" {
+  return value === "yes" || value === "no" ? value : fallback;
+}
+
 export function PatientDashboard({ currentUser, onLogout }: { currentUser?: CurrentUser | null; onLogout?: () => void }) {
   const [activePage, setActivePage] = useState<PatientTab>("risk");
   const [assessmentStep, setAssessmentStep] = useState(0);
@@ -452,6 +506,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
   const [hasAssessment, setHasAssessment] = useState(false);
   const [latestPrediction, setLatestPrediction] = useState<PatientPrediction | null>(null);
   const [latestAssessmentId, setLatestAssessmentId] = useState<string | null>(null);
+  const [viewingAssessmentId, setViewingAssessmentId] = useState<string | null>(null);
   const [assessmentHistory, setAssessmentHistory] = useState<AssessmentHistoryItem[]>([]);
   const [reminders, setReminders] = useState<ReminderRecord[]>([]);
   const [assessmentError, setAssessmentError] = useState<string | null>(null);
@@ -603,7 +658,55 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
     setAssessment(createAssessmentDraft());
     setAssessmentStep(0);
     setAssessmentError(null);
+    setViewingAssessmentId(null);
     setActivePage("assessment");
+  };
+
+  const changePage = (tab: PatientTab) => {
+    if (tab !== "assessment") {
+      setViewingAssessmentId(null);
+    }
+    setActivePage(tab);
+  };
+
+  const viewAssessmentRecord = (item: AssessmentHistoryItem) => {
+    setAssessment(historyItemToAssessmentForm(item));
+    setAssessmentStep(0);
+    setAssessmentError(null);
+    setLatestPrediction(historyItemToPrediction(item));
+    setLatestAssessmentId(item.assessment_id);
+    setViewingAssessmentId(item.assessment_id);
+    setHasAssessment(true);
+    setActivePage("assessment");
+  };
+
+  const deleteAssessmentRecord = async (item: AssessmentHistoryItem) => {
+    if (!userId) {
+      setAssessmentError("Sign in before deleting an assessment.");
+      return;
+    }
+
+    try {
+      await deletePatientAssessment(item.assessment_id, userId);
+      const items = await loadAssessmentHistory(userId);
+      setAssessmentHistory(items);
+
+      const latest = items[0];
+      if (!latest) {
+        setHasAssessment(false);
+        setLatestPrediction(null);
+        setLatestAssessmentId(null);
+        return;
+      }
+
+      if (latestAssessmentId === item.assessment_id || !latestAssessmentId) {
+        setLatestPrediction(historyItemToPrediction(latest));
+        setLatestAssessmentId(latest.assessment_id);
+      }
+      setHasAssessment(true);
+    } catch (error) {
+      setAssessmentError(error instanceof Error ? error.message : "Unable to delete assessment.");
+    }
   };
 
   const completeAssessment = async () => {
@@ -629,6 +732,7 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
       const data = await response.json();
       setLatestPrediction(data.prediction);
       setLatestAssessmentId(data.assessment_id);
+      setViewingAssessmentId(null);
       setHasAssessment(true);
       setAssessmentHistory(await loadAssessmentHistory(userId));
       setActivePage("risk");
@@ -643,11 +747,11 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
     <ChatbotContextProvider>
       <ChatbotContextSync context={chatbotPageContext} />
       <main className="min-h-screen bg-[#F8FAFC] text-slate-950 lg:grid lg:grid-cols-[280px_1fr]">
-        <PatientSidebar activePage={activePage} onChange={setActivePage} />
+        <PatientSidebar activePage={activePage} onChange={changePage} />
 
         <section className="min-w-0 px-5 py-5 lg:px-8">
           <div className="mx-auto w-full max-w-[1440px]">
-            <TopBar onLogout={onLogout} hasAssessment={hasAssessment} />
+            <TopBar onLogout={onLogout} />
 
             <div className="mt-7">
             {activePage === "assessment" ? (
@@ -659,23 +763,29 @@ export function PatientDashboard({ currentUser, onLogout }: { currentUser?: Curr
                 prediction={latestPrediction}
                 error={assessmentError}
                 isLoading={isAssessmentLoading}
+                readOnly={Boolean(viewingAssessmentId)}
                 onComplete={completeAssessment}
+                onExitReadOnly={() => {
+                  setViewingAssessmentId(null);
+                  setActivePage("risk");
+                }}
                 Notice={Notice}
                 SectionTitle={SectionTitle}
               />
             ) : null}
             {activePage === "risk" ? (
-              <RiskExplorerPage
+              <AssessmentHistoryPage
+                items={assessmentHistory}
                 currentRisk={currentRisk}
                 currentCategory={currentCategory}
+                selectedAssessmentId={latestAssessmentId}
                 hasAssessment={hasAssessment}
                 isAssessmentHistoryLoading={isAssessmentHistoryLoading}
                 riskFactors={personalizedRiskFactors}
                 onStartAssessment={startNewAssessment}
+                onViewAssessment={viewAssessmentRecord}
+                onDeleteAssessment={deleteAssessmentRecord}
               />
-            ) : null}
-            {activePage === "history" ? (
-              <AssessmentHistoryPage items={assessmentHistory} onStartAssessment={startNewAssessment} />
             ) : null}
             {activePage === "action" ? (
               <ActionPlanPage
@@ -763,37 +873,21 @@ function PatientSidebar({
 
 function TopBar({
   onLogout,
-  hasAssessment,
 }: {
   onLogout?: () => void;
-  hasAssessment: boolean;
 }) {
   return (
     <header className="flex flex-col gap-4 rounded-[24px] border border-white bg-white/80 px-5 py-5 shadow-soft backdrop-blur lg:flex-row lg:items-center lg:justify-between">
       <div>
-        <p className="flex items-center gap-2 text-sm font-semibold text-cyan-700">
-          <HeartPulse className="h-4 w-4" />
+        <p className="flex items-center gap-3 text-xl font-bold tracking-tight text-cyan-700 md:text-2xl">
+          <HeartPulse className="h-6 w-6" />
           Personalized cardiovascular disease monitoring
-        </p>
-        <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">
-          Welcome back, Wen Yang
-        </h2>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-          Review your risk result, understand the main contributors, and track safer health reminders.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white py-2 pl-2 pr-5 shadow-sm">
-          <div className="grid h-11 w-11 place-items-center rounded-full bg-cyan-700 font-bold text-white">
-            HW
-          </div>
-          <div>
-            <strong className="block text-sm text-slate-900">General User</strong>
-            <span className="block text-xs text-slate-500">
-              {hasAssessment ? "Last assessment: Today" : "Assessment not completed"}
-            </span>
-          </div>
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-800 shadow-sm">
+          Wen Yang
         </div>
         {onLogout ? (
           <Button variant="secondary" onClick={onLogout}>
