@@ -51,13 +51,24 @@ cd server-ml
 python -m app.scripts.train_non_domain_model
 ```
 
-The script compares Logistic Regression, Random Forest, Gradient Boosting, and XGBoost if available. It saves:
+The script compares Logistic Regression, Random Forest, Gradient Boosting, Neural Network, and XGBoost if available. It saves:
 
 ```text
 server-ml/app/models/non_domain_model_comparison.json
 server-ml/app/models/non_domain_cvd_model.pkl
 server-ml/app/models/non_domain_cvd_metadata.json
 ```
+
+The metadata includes standard classification metrics, calibration-oriented metrics such as Brier score and log loss, risk-band observed outcome rates, and simple subgroup performance checks by sex and age group. These extra checks support FYP2 validation and help explain model limitations more clearly.
+
+To run a lightweight hyperparameter tuning experiment:
+
+```powershell
+cd server-ml
+python -m app.scripts.tune_non_domain_model
+```
+
+This writes `server-ml/app/models/non_domain_hyperparameter_tuning.json`. The tuning script is intentionally separate from the production training script so the app model is not replaced unless the tuned model is reviewed first.
 
 ## Prediction
 

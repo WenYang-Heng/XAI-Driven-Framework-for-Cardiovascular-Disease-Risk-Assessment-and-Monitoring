@@ -1,0 +1,80 @@
+﻿<html><head><meta charset="utf-8"><style>body{font-family:Arial;line-height:1.35}h1{font-size:24px}h2{font-size:18px;margin-top:24px}.q{font-weight:bold;color:#111;margin-top:12px}.a{margin-bottom:10px}table{border-collapse:collapse;width:100%;margin:12px 0}td,th{border:1px solid #444;padding:7px;vertical-align:top}th{background:#eee}</style></head><body>
+<h1>FYP Viva Q&A Preparation - CardioXAI Non-Domain Expert Module</h1>
+<p><b>Project:</b> Explainable AI-Based Cardiovascular Disease Risk Assessment and Monitoring System</p>
+<p><b>Subtopic 2:</b> Personalized cardiovascular disease health monitoring for non-domain expert users.</p>
+<h2>Objective Measurement</h2>
+<table><tr><th>Objective</th><th>Implemented Feature</th><th>How to Measure</th><th>Metrics</th></tr>
+<tr><td>Deliver personalized CVD risk insights using simple scores, visual indicators, and plain-language explanations.</td><td>Risk score, risk category, risk scale, top factors, XAI explanation.</td><td>User comprehension test before/after using the result page.</td><td>Correct interpretation rate, perceived clarity, explanation usefulness.</td></tr>
+<tr><td>Develop health monitoring with risk prediction, lifestyle recommendation, and simulation.</td><td>Assessment form, ML prediction, what-if simulator, action plan generator.</td><td>Functional testing and scenario-based user tasks.</td><td>Task completion rate, error rate, time-on-task.</td></tr>
+<tr><td>Test engagement, health literacy, and informed decision-making.</td><td>Assessment history, reminders, chatbot, action plans.</td><td>Usability study and questionnaire in FYP2.</td><td>SUS score, satisfaction score, number of actions/reminders created.</td></tr>
+</table>
+<h2>1. Project Overview</h2>
+<p class="q">Q: What is your project about?</p><p class="a">It is a cardiovascular disease risk assessment and monitoring system that uses machine learning and explainable AI to help non-domain expert users understand their estimated CVD risk, top contributing factors, and practical next steps.</p>
+<p class="q">Q: What is your main contribution?</p><p class="a">The main contribution is not only predicting risk, but translating the prediction into user-friendly explanation, action planning, reminders, and chatbot guidance for preventive awareness.</p>
+<p class="q">Q: Why should this system exist when calculators already exist?</p><p class="a">Existing tools such as PREVENT, ACC, and QRISK mainly provide risk scores. My system adds patient-friendly explanation, top contributing factors, action plans, reminders, simulation, and chatbot support.</p>
+<h2>2. Problem Statement and Justification</h2>
+<p class="q">Q: What problem are you solving?</p><p class="a">The problem is that many AI-based health tools are difficult to understand, lack explainability, and do not provide enough personalized support for non-domain users to act on the result.</p>
+<p class="q">Q: How does your system address low health literacy?</p><p class="a">It uses simple input fields, visual risk indicators, plain-language explanation, modifiable factor labels, and short suggested actions instead of clinical terminology.</p>
+<p class="q">Q: What is the research gap from your literature review?</p><p class="a">Existing systems often focus on either risk calculation, diagnosis, explainability, or governance separately. My module combines prediction, explanation, personalized recommendations, reminders, and conversational support for non-domain users.</p>
+<h2>3. Dataset Selection</h2>
+<p class="q">Q: Why use the Kaggle Cardiovascular Disease Dataset?</p><p class="a">It contains user-friendly features such as age, height, weight, blood pressure, cholesterol, glucose, smoking, activity, and alcohol. These match what ordinary users can provide.</p>
+<p class="q">Q: Why not use UCI for the non-domain module?</p><p class="a">The UCI dataset contains clinical features such as ECG results, chest pain type, ST depression, thalassemia, and exercise test data. These are not realistic for non-domain users to know.</p>
+<p class="q">Q: What are the limitations of the Kaggle dataset?</p><p class="a">It may not represent local users, cholesterol and glucose are categorical, and the target label is not the same as a clinically validated future risk probability. Therefore it is suitable for prototype estimation, not diagnosis.</p>
+<p class="q">Q: How did you clean the dataset?</p><p class="a">I removed duplicates, converted age from days to years, validated realistic height, weight and blood pressure ranges, ensured diastolic BP is lower than systolic BP, calculated BMI, and removed extreme BMI outliers.</p>
+<h2>4. Machine Learning Implementation</h2>
+<p class="q">Q: How is the prediction implemented?</p><p class="a">The system uses a supervised binary classification pipeline. The cleaned dataset is split into training and test sets using an 80/20 stratified split with random_state 42. Several models are trained and compared.</p>
+<p class="q">Q: Which models did you compare?</p><p class="a">Logistic Regression, Random Forest, XGBoost, Neural Network, and Gradient Boosting. This allows comparison between interpretable, ensemble, and more complex models.</p>
+<p class="q">Q: Why use multiple metrics?</p><p class="a">Accuracy alone can be misleading. Precision, recall, F1-score, ROC-AUC, and confusion matrix give a better view of performance, especially for health-related classification where false positives and false negatives matter.</p>
+<p class="q">Q: Why use ROC-AUC?</p><p class="a">ROC-AUC measures how well the model separates CVD and non-CVD cases across different thresholds. It is useful for comparing model discrimination.</p>
+<p class="q">Q: Which model performed best?</p><p class="a">XGBoost achieved the best ROC-AUC in the four-model comparison, while Gradient Boosting was very close and easier to explain for the prototype.</p>
+<p class="q">Q: Is your model clinically valid?</p><p class="a">No. It is a prototype educational risk estimation model. It needs calibration, local validation, fairness testing, and clinical review before real healthcare use.</p>
+<h2>5. Risk Score and Classification</h2>
+<p class="q">Q: What does the risk score mean?</p><p class="a">It is the model-estimated probability that the user's input pattern matches the dataset's CVD label. It is not a guaranteed future clinical probability.</p>
+<p class="q">Q: Why classify as low, moderate, and high?</p><p class="a">Risk categories help non-domain users interpret the percentage more easily. They turn a numerical output into a more understandable visual and textual result.</p>
+<p class="q">Q: How do you justify the 0-30, 31-70, 71-100 thresholds?</p><p class="a">They are prototype thresholds for easier interpretation of the 0-100% probability. I would openly state that they are not clinically validated and should be calibrated in FYP2.</p>
+<h2>6. XAI and Explanation</h2>
+<p class="q">Q: Why use XAI?</p><p class="a">CVD prediction can be seen as a black box. XAI helps show which factors influenced the prediction, improving transparency and user trust.</p>
+<p class="q">Q: Why use SHAP?</p><p class="a">SHAP provides local explanations for individual predictions and shows the direction and magnitude of each feature's contribution. This is suitable for explaining a user's specific result.</p>
+<p class="q">Q: Why not only use feature importance?</p><p class="a">Feature importance is usually global and does not explain one user's result clearly. SHAP is better for case-level explanation.</p>
+<p class="q">Q: Are your explanations truly XAI or hardcoded?</p><p class="a">The factor ranking comes from XAI or fallback model importance. The user-friendly text is controlled wording that translates technical factors safely. So the source is model-based, while the wording is designed for usability.</p>
+<p class="q">Q: Can SHAP prove causality?</p><p class="a">No. SHAP explains model contribution, not causal effect. I should say a factor influenced the estimate, not that changing it will definitely reduce disease risk.</p>
+<h2>7. What-if Lifestyle Simulator</h2>
+<p class="q">Q: What is the purpose of the simulator?</p><p class="a">It helps users explore how changes in modifiable factors may affect projected risk, supporting awareness and motivation.</p>
+<p class="q">Q: Does it prove risk reduction?</p><p class="a">No. It is model-based projection, not causal proof. Real health outcomes depend on many factors and professional medical guidance.</p>
+<p class="q">Q: How would you evaluate it?</p><p class="a">I would test whether users understand modifiable factors better, whether they find the simulator useful, and whether the output remains realistic for common scenarios.</p>
+<h2>8. Action Plan Generator</h2>
+<p class="q">Q: How are action plans generated?</p><p class="a">They are generated based on the risk category and top modifiable factors. The system recommends practical next steps linked to factors such as blood pressure, activity, cholesterol, smoking, glucose, or BMI.</p>
+<p class="q">Q: Why include action plans?</p><p class="a">A risk score alone may not tell users what to do. Action plans convert risk explanation into practical preventive steps.</p>
+<p class="q">Q: How do you prevent unsafe advice?</p><p class="a">The system avoids diagnosis and medication advice, focuses on general lifestyle guidance, and encourages healthcare professional consultation for concerning cases.</p>
+<h2>9. Reminder System</h2>
+<p class="q">Q: Why include reminders?</p><p class="a">Reminders support follow-through. They help users turn action plan items into scheduled health-related tasks.</p>
+<p class="q">Q: Can reminders work when the app is closed?</p><p class="a">Yes, if backend scheduling is configured. Supabase scheduled functions can periodically process due reminders and send email through Resend.</p>
+<p class="q">Q: Why use Resend?</p><p class="a">Resend provides a simple API for transactional emails, making it suitable for prototype reminder email delivery.</p>
+<h2>10. Virtual Care Navigator Chatbot</h2>
+<p class="q">Q: Why use an LLM chatbot?</p><p class="a">It allows users to ask follow-up questions naturally. This is useful for non-domain users who may not know how to interpret risk scores or action plans.</p>
+<p class="q">Q: How do you prevent hallucination?</p><p class="a">The chatbot uses scope control, safety rules, page context, and trusted knowledge snippets. It is instructed not to invent user data, diagnose disease, or give medication advice.</p>
+<p class="q">Q: Why use RAG-style knowledge snippets?</p><p class="a">They ground the answer in trusted information and reduce reliance on the LLM's general memory.</p>
+<p class="q">Q: What happens if the question is out of scope?</p><p class="a">The chatbot politely redirects users back to the CVD risk assessment app, action plan, reminders, or general CVD education within its allowed scope.</p>
+<h2>11. Usability Testing</h2>
+<p class="q">Q: How would you test usability in FYP2?</p><p class="a">I would run user tasks and measure SUS score, task completion rate, time-on-task, error rate, satisfaction, and qualitative feedback.</p>
+<p class="q">Q: What tasks would users perform?</p><p class="a">Complete an assessment, interpret the risk result, identify top factors, use the simulator, generate an action plan, create a reminder, and ask the chatbot a question.</p>
+<p class="q">Q: How would you test health literacy improvement?</p><p class="a">I would use pre-test and post-test questions asking users to explain risk category, identify modifiable factors, and choose a suitable next action.</p>
+<h2>12. Ethics, Safety, and Privacy</h2>
+<p class="q">Q: Is the system medically safe?</p><p class="a">It is safer when positioned as an educational prototype, not a diagnostic tool. It includes disclaimers and encourages professional consultation for high-risk or unclear cases.</p>
+<p class="q">Q: Can it replace a doctor?</p><p class="a">No. It cannot replace clinical judgment, laboratory testing, or medical diagnosis. It supports awareness and preparation for professional consultation.</p>
+<p class="q">Q: What are the privacy risks?</p><p class="a">The system handles sensitive health data, so risks include unauthorized access and misuse. FYP2 should strengthen access control, data minimization, secure storage, and audit logging.</p>
+<h2>13. FYP2 Plan</h2>
+<p class="q">Q: What will you do in FYP2?</p><p class="a">I will focus on evaluation and refinement: model calibration, usability testing, explanation evaluation, chatbot safety testing, reminder automation, and improving simulator assumptions.</p>
+<p class="q">Q: What are your success criteria?</p><p class="a">Acceptable model performance, understandable explanations, good usability score, high task completion rate, safe chatbot responses, and evidence that users better understand their risk and next steps.</p>
+<h2>14. High-Risk Examiner Questions</h2>
+<p class="q">Q: Why should users trust your prediction?</p><p class="a">They should not blindly trust it. They should treat it as a transparent estimate supported by model comparison, XAI explanation, and clear limitations.</p>
+<p class="q">Q: Your dataset is not local. How can it be valid?</p><p class="a">This is a limitation. The dataset is suitable for prototype development because it matches non-domain user inputs, but FYP2 should test generalizability and ideally use local or more representative data.</p>
+<p class="q">Q: What if the model gives a wrong result?</p><p class="a">That risk exists. The system avoids diagnosis, provides disclaimers, encourages professional advice, and requires future calibration and validation.</p>
+<p class="q">Q: Why use an LLM in healthcare?</p><p class="a">The LLM is used for explanation and navigation, not diagnosis. Safety rules and context restrictions reduce risk while improving accessibility for non-domain users.</p>
+<h2>15. One-Minute Summary</h2>
+<p>My project is an explainable AI-based cardiovascular disease risk assessment and monitoring system for non-domain expert users. The system uses user-friendly inputs to estimate CVD risk, then explains the result using visual indicators and XAI-based top contributing factors. It also supports users through action plans, reminders, a what-if simulator, and a virtual care navigator chatbot. The goal is not to diagnose disease, but to improve preventive awareness, health literacy, and user engagement. In FYP2, I will focus on evaluation, including usability testing, explanation understanding, model calibration, chatbot safety, and reminder automation.</p>
+<h2>16. Things to Say If Challenged</h2>
+<ul><li>This is an educational prototype, not a medical diagnostic system.</li><li>The score is model-estimated and requires clinical validation.</li><li>The dataset was chosen because it matches non-domain user inputs.</li><li>SHAP explains model contribution, not causality.</li><li>The simulator shows projection, not guaranteed risk reduction.</li><li>The chatbot uses safety rules and trusted context to reduce hallucination.</li></ul>
+<h2>17. Weaknesses to Openly Admit</h2>
+<ul><li>The model is not clinically validated or locally calibrated.</li><li>Risk thresholds are prototype thresholds.</li><li>Kaggle data may not represent Malaysian users.</li><li>LLM responses require safety evaluation.</li><li>Real user testing is needed in FYP2.</li></ul>
+</body></html>

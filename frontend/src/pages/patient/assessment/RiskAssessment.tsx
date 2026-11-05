@@ -1,4 +1,4 @@
-import { Check, CheckCircle2, ChevronLeft, ChevronRight, Save } from "lucide-react";
+import { Check, CheckCircle2, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader } from "../../../components/ui/Card";
 import type { AssessmentForm } from "./assessmentModel";
@@ -25,7 +25,9 @@ type RiskAssessmentProps = {
   } | null;
   error?: string | null;
   isLoading?: boolean;
+  readOnly?: boolean;
   onComplete: () => void | Promise<void>;
+  onExitReadOnly?: () => void;
   Notice: React.ComponentType<{ tone: "soft" | "warning" | "danger"; children: React.ReactNode }>;
   SectionTitle: React.ComponentType<{ label: string; title: string; description: string }>;
 };
@@ -47,11 +49,6 @@ const assessmentSteps: AssessmentStep[] = [
     description: "Simple lifestyle questions help explain which risk factors may be improved.",
   },
   {
-    id: "history",
-    title: "Health history",
-    description: "A few health-background questions help personalize the explanation.",
-  },
-  {
     id: "review",
     title: "Review",
     description: "Check your answers before generating your estimated risk result.",
@@ -66,20 +63,25 @@ export function RiskAssessment({
   prediction,
   error,
   isLoading = false,
+  readOnly = false,
   onComplete,
+  onExitReadOnly,
   Notice,
   SectionTitle,
 }: RiskAssessmentProps) {
   const currentStep = assessmentSteps[step];
   const isLastStep = step === assessmentSteps.length - 1;
-  const hasUrgentSymptoms = form.symptoms === "urgent";
 
   return (
     <section className="grid gap-6">
       <SectionTitle
-        label="CVD risk assessment"
-        title="Build your risk profile step by step"
-        description="The assessment uses simple questions and helpful hints so general users can complete it without medical training."
+        label={readOnly ? "Assessment record" : "CVD risk assessment"}
+        title={readOnly ? "View saved assessment" : "Build your risk profile step by step"}
+        description={
+          readOnly
+            ? "This is a read-only copy of the answers saved for this assessment."
+            : "The assessment uses simple questions and helpful hints so general users can complete it without medical training."
+        }
       />
 
       <div className="mx-auto grid w-full max-w-7xl gap-10 lg:grid-cols-[240px_minmax(0,820px)_240px] lg:items-start xl:gap-14">
@@ -137,27 +139,13 @@ export function RiskAssessment({
         <Card className="p-6">
           <CardHeader title={currentStep.title} subtitle={currentStep.description} />
           <div className="mt-6">
-            {step === 0 ? <BasicsStep form={form} updateField={updateField} /> : null}
-            {step === 1 ? <NumbersStep form={form} updateField={updateField} /> : null}
-            {step === 2 ? <HabitsStep form={form} updateField={updateField} /> : null}
-            {step === 3 ? <HistoryStep form={form} updateField={updateField} /> : null}
-            {step === 4 ? (
+            {step === 0 ? <BasicsStep form={form} updateField={updateField} readOnly={readOnly} /> : null}
+            {step === 1 ? <NumbersStep form={form} updateField={updateField} readOnly={readOnly} /> : null}
+            {step === 2 ? <HabitsStep form={form} updateField={updateField} readOnly={readOnly} /> : null}
+            {step === 3 ? (
               <div className="grid gap-4">
                 <AssessmentReview form={form} />
-                <Notice tone="soft">
-                  Your result will be shown as an estimated risk for health awareness. It is not a medical diagnosis.
-                </Notice>
-                {hasUrgentSymptoms ? (
-                  <Notice tone="danger">
-                    You selected urgent symptoms. Please seek medical care promptly if you are experiencing chest pain, severe breathlessness, fainting, or worsening symptoms.
-                  </Notice>
-                ) : null}
                 {error ? <Notice tone="danger">{error}</Notice> : null}
-                {prediction ? (
-                  <Notice tone="soft">
-                    Latest saved result: {labelize(prediction.risk_level)} risk with {labelize(prediction.confidence_level)} confidence.
-                  </Notice>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -173,10 +161,21 @@ export function RiskAssessment({
               Back
             </Button>
             {isLastStep ? (
-              <Button type="button" disabled={isLoading} onClick={onComplete}>
-                {isLoading ? "Saving assessment..." : "Generate risk result"}
-                <Save className="h-4 w-4" />
-              </Button>
+              readOnly ? (
+                <Button type="button" onClick={onExitReadOnly}>
+                  Back to records
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button type="button" disabled={isLoading} onClick={onComplete}>
+                  {isLoading ? "Assessing..." : "Assess"}
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </Button>
+              )
             ) : (
               <Button type="button" onClick={() => setStep(Math.min(assessmentSteps.length - 1, step + 1))}>
                 Continue
@@ -194,141 +193,97 @@ export function RiskAssessment({
 function BasicsStep({
   form,
   updateField,
+  readOnly = false,
 }: {
   form: AssessmentForm;
   updateField: RiskAssessmentProps["updateField"];
+  readOnly?: boolean;
 }) {
   return (
     <div className="grid gap-5 md:grid-cols-2">
-      <NumberField label="Age" value={form.age} min={18} max={95} unit="years" helper="Use your current age." onChange={(value) => updateField("age", value)} />
-      <NumberField label="Height" value={form.heightCm} min={120} max={220} unit="cm" helper="Used with weight to estimate BMI for the model." onChange={(value) => updateField("heightCm", value)} />
-      <NumberField label="Weight" value={form.weightKg} min={30} max={200} unit="kg" helper="Use your current weight if you know it." onChange={(value) => updateField("weightKg", value)} />
+      <NumberField label="Age" value={form.age} min={18} max={95} unit="years" helper="Use your current age." readOnly={readOnly} onChange={(value) => updateField("age", value)} />
+      <NumberField label="Height" value={form.heightCm} min={120} max={220} unit="cm" helper="Used with weight to estimate BMI for the model." readOnly={readOnly} onChange={(value) => updateField("heightCm", value)} />
+      <NumberField label="Weight" value={form.weightKg} min={30} max={200} unit="kg" helper="Use your current weight if you know it." readOnly={readOnly} onChange={(value) => updateField("weightKg", value)} />
       <ChoiceGroup
         label="Sex"
         value={form.sex}
+        columns="two"
         options={[
           ["female", "Female"],
           ["male", "Male"],
         ]}
+        readOnly={readOnly}
         onChange={(value) => updateField("sex", value as AssessmentForm["sex"])}
       />
     </div>
   );
 }
 
-function NumbersStep({ form, updateField }: { form: AssessmentForm; updateField: RiskAssessmentProps["updateField"] }) {
+function NumbersStep({ form, updateField, readOnly = false }: { form: AssessmentForm; updateField: RiskAssessmentProps["updateField"]; readOnly?: boolean }) {
   return (
     <div className="grid gap-5">
-      <ChoiceGroup
-        label="Do you know your latest blood pressure?"
-        value={form.bpInputType}
-        options={[
-          ["exact", "Yes, exact value"],
-          ["category", "Only the category"],
-          ["unknown", "Not sure"],
-        ]}
-        helper="If you do not know the value, choose not sure instead of guessing."
-        onChange={(value) => updateField("bpInputType", value as AssessmentForm["bpInputType"])}
-      />
-      {form.bpInputType === "exact" ? (
-        <div className="grid gap-5 md:grid-cols-2">
-          <NumberField label="Systolic blood pressure" value={form.systolicBp} min={80} max={220} unit="mmHg" helper="This is the upper number, for example 132 in 132/84." onChange={(value) => updateField("systolicBp", value)} />
-          <NumberField label="Diastolic blood pressure" value={form.diastolicBp} min={40} max={140} unit="mmHg" helper="This is the lower number, for example 84 in 132/84." onChange={(value) => updateField("diastolicBp", value)} />
+      <fieldset>
+        <legend className="text-sm font-semibold text-slate-700">What is your blood pressure?</legend>
+        <div className="mt-3 grid gap-5 md:grid-cols-2">
+          <NumberField label="Systolic blood pressure" value={form.systolicBp} min={80} max={220} unit="mmHg" helper="This is the upper number, for example 132 in 132/84." readOnly={readOnly} onChange={(value) => {
+            updateField("bpInputType", "exact");
+            updateField("systolicBp", value);
+          }} />
+          <NumberField label="Diastolic blood pressure" value={form.diastolicBp} min={40} max={140} unit="mmHg" helper="This is the lower number, for example 84 in 132/84." readOnly={readOnly} onChange={(value) => {
+            updateField("bpInputType", "exact");
+            updateField("diastolicBp", value);
+          }} />
         </div>
-      ) : null}
-      {form.bpInputType === "category" ? (
-        <ChoiceGroup
-          label="Blood pressure category"
-          value={form.bpCategory}
-          options={[
-            ["normal", "Normal"],
-            ["above_normal", "Above normal"],
-            ["well_above_normal", "Well above normal"],
-          ]}
-          onChange={(value) => updateField("bpCategory", value as AssessmentForm["bpCategory"])}
-        />
-      ) : null}
+      </fieldset>
       <ChoiceGroup
-        label="Do you know your latest cholesterol?"
-        value={form.cholesterolInputType}
+        label="What is your cholesterol level?"
+        value={form.cholesterolCategory}
         options={[
-          ["exact", "Yes, exact value"],
-          ["category", "Only the category"],
-          ["unknown", "Not sure"],
+          ["normal", "Normal"],
+          ["above_normal", "Above normal"],
+          ["well_above_normal", "Well above normal"],
         ]}
-        onChange={(value) => updateField("cholesterolInputType", value as AssessmentForm["cholesterolInputType"])}
+        readOnly={readOnly}
+        onChange={(value) => {
+          updateField("cholesterolInputType", "category");
+          updateField("cholesterolCategory", value as AssessmentForm["cholesterolCategory"]);
+        }}
       />
-      {form.cholesterolInputType === "exact" ? (
-        <NumberField label="Total cholesterol" value={form.cholesterol} min={120} max={360} unit="mg/dL" helper="If you only know mmol/L, your clinic report may show both units." onChange={(value) => updateField("cholesterol", value)} />
-      ) : null}
-      {form.cholesterolInputType === "category" ? (
-        <ChoiceGroup
-          label="Cholesterol category"
-          value={form.cholesterolCategory}
-          options={[
-            ["normal", "Normal"],
-            ["above_normal", "Above normal"],
-            ["well_above_normal", "Well above normal"],
-          ]}
-          onChange={(value) => updateField("cholesterolCategory", value as AssessmentForm["cholesterolCategory"])}
-        />
-      ) : null}
       <ChoiceGroup
-        label="Do you know your latest fasting blood glucose?"
-        value={form.glucoseInputType}
+        label="What is your blood glucose level?"
+        value={form.glucoseCategory}
         options={[
-          ["exact", "Yes, exact value"],
-          ["category", "Only the category"],
-          ["unknown", "Not sure"],
+          ["normal", "Normal"],
+          ["above_normal", "Above normal"],
+          ["well_above_normal", "Well above normal"],
         ]}
-        helper="Use fasting glucose if your health report includes it."
-        onChange={(value) => updateField("glucoseInputType", value as AssessmentForm["glucoseInputType"])}
+        readOnly={readOnly}
+        onChange={(value) => {
+          updateField("glucoseInputType", "category");
+          updateField("glucoseCategory", value as AssessmentForm["glucoseCategory"]);
+        }}
       />
-      {form.glucoseInputType === "exact" ? (
-        <NumberField label="Fasting blood glucose" value={form.glucose} min={60} max={300} unit="mg/dL" helper="Use the fasting value from your report, if available." onChange={(value) => updateField("glucose", value)} />
-      ) : null}
-      {form.glucoseInputType === "category" ? (
-        <ChoiceGroup
-          label="Blood glucose category"
-          value={form.glucoseCategory}
-          options={[
-            ["normal", "Normal"],
-            ["above_normal", "Above normal"],
-            ["well_above_normal", "Well above normal"],
-          ]}
-          onChange={(value) => updateField("glucoseCategory", value as AssessmentForm["glucoseCategory"])}
-        />
-      ) : null}
       <RangeGuide />
     </div>
   );
 }
 
-function HabitsStep({ form, updateField }: { form: AssessmentForm; updateField: RiskAssessmentProps["updateField"] }) {
+function HabitsStep({ form, updateField, readOnly = false }: { form: AssessmentForm; updateField: RiskAssessmentProps["updateField"]; readOnly?: boolean }) {
   return (
     <div className="grid gap-5">
-      <ChoiceGroup label="Do you currently smoke?" value={form.smoking} options={[["no", "No"], ["yes", "Yes"]]} onChange={(value) => updateField("smoking", value as AssessmentForm["smoking"])} />
-      <ChoiceGroup label="Do you do regular physical activity?" value={form.activity} options={[["no", "No"], ["yes", "Yes"]]} helper="Choose yes if you do at least some regular walking, exercise, sport, or active daily movement." onChange={(value) => updateField("activity", value as AssessmentForm["activity"])} />
-      <ChoiceGroup label="Alcohol intake" value={form.alcoholIntake} options={[["no", "No"], ["yes", "Yes"]]} helper="Choose yes if you regularly drink alcohol." onChange={(value) => updateField("alcoholIntake", value as AssessmentForm["alcoholIntake"])} />
+      <ChoiceGroup label="Do you currently smoke?" value={form.smoking} options={[["no", "No"], ["yes", "Yes"]]} readOnly={readOnly} onChange={(value) => updateField("smoking", value as AssessmentForm["smoking"])} />
+      <ChoiceGroup label="Do you do regular physical activity?" value={form.activity} options={[["no", "No"], ["yes", "Yes"]]} helper="Choose yes if you do at least some regular walking, exercise, sport, or active daily movement." readOnly={readOnly} onChange={(value) => updateField("activity", value as AssessmentForm["activity"])} />
+      <ChoiceGroup label="Do you consume alcohol?" value={form.alcoholIntake} options={[["no", "No"], ["yes", "Yes"]]} helper="Choose yes if you regularly drink alcohol." readOnly={readOnly} onChange={(value) => updateField("alcoholIntake", value as AssessmentForm["alcoholIntake"])} />
     </div>
   );
 }
 
-function HistoryStep({ form, updateField }: { form: AssessmentForm; updateField: RiskAssessmentProps["updateField"] }) {
-  return (
-    <div className="grid gap-5">
-      <ChoiceGroup label="Diabetes or prediabetes history" value={form.diabetes} options={[["no", "No"], ["prediabetes", "Prediabetes"], ["yes", "Diabetes"], ["unsure", "Not sure"]]} onChange={(value) => updateField("diabetes", value as AssessmentForm["diabetes"])} />
-      <ChoiceGroup label="Current symptoms" value={form.symptoms} options={[["none", "No symptoms"], ["mild", "Mild concern"], ["urgent", "Chest pain or severe breathlessness"]]} onChange={(value) => updateField("symptoms", value as AssessmentForm["symptoms"])} />
-    </div>
-  );
-}
-
-function NumberField({ label, value, min, max, unit, helper, onChange }: { label: string; value: number; min: number; max: number; unit: string; helper: string; onChange: (value: number) => void }) {
+function NumberField({ label, value, min, max, unit, helper, readOnly = false, onChange }: { label: string; value: number; min: number; max: number; unit: string; helper: string; readOnly?: boolean; onChange: (value: number) => void }) {
   return (
     <label className="block rounded-[20px] border border-slate-200 bg-slate-50 p-4">
       <span className="text-sm font-semibold text-slate-700">{label}</span>
       <div className="mt-3 flex items-center gap-3">
-        <input className="form-input mt-0" type="number" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+        <input className="form-input mt-0 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500" type="number" min={min} max={max} value={value} disabled={readOnly} onChange={(event) => onChange(Number(event.target.value))} />
         <span className="w-16 text-sm font-semibold text-slate-500">{unit}</span>
       </div>
       <small className="mt-3 block leading-5 text-slate-500">{helper}</small>
@@ -336,19 +291,21 @@ function NumberField({ label, value, min, max, unit, helper, onChange }: { label
   );
 }
 
-function ChoiceGroup({ label, value, options, helper, onChange }: { label: string; value: string; options: string[][]; helper?: string; onChange: (value: string) => void }) {
+function ChoiceGroup({ label, value, options, helper, columns = "three", readOnly = false, onChange }: { label: string; value: string; options: string[][]; helper?: string; columns?: "two" | "three"; readOnly?: boolean; onChange: (value: string) => void }) {
+  const gridClassName = columns === "two" ? "sm:grid-cols-2" : "sm:grid-cols-3";
+
   return (
     <fieldset>
       <legend className="text-sm font-semibold text-slate-700">{label}</legend>
       {helper ? <p className="mt-1 text-sm text-slate-500">{helper}</p> : null}
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      <div className={`mt-3 grid gap-3 ${gridClassName}`}>
         {options.map(([optionValue, optionLabel]) => {
           const selected = value === optionValue;
           return (
-            <button key={optionValue} type="button" onClick={() => onChange(optionValue)} className={`min-h-16 rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition ${selected ? "border-cyan-300 bg-cyan-50 text-cyan-900 ring-2 ring-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:bg-cyan-50"}`}>
-              <span className="flex items-center justify-between gap-3">
-                {optionLabel}
-                {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-700" /> : null}
+            <button key={optionValue} type="button" disabled={readOnly} onClick={() => onChange(optionValue)} className={`min-h-16 rounded-2xl border px-4 py-3 text-left text-sm font-semibold transition disabled:cursor-not-allowed ${selected ? "border-cyan-300 bg-cyan-50 text-cyan-900 ring-2 ring-cyan-100" : "border-slate-200 bg-white text-slate-600 hover:border-cyan-200 hover:bg-cyan-50 disabled:hover:border-slate-200 disabled:hover:bg-white"}`}>
+              <span className="grid grid-cols-[1fr_18px] items-center gap-3">
+                <span className="min-w-0 break-words">{optionLabel}</span>
+                {selected ? <CheckCircle2 className="h-4 w-4 text-cyan-700" /> : <span />}
               </span>
             </button>
           );
@@ -389,22 +346,20 @@ function AssessmentReview({ form }: { form: AssessmentForm }) {
     ["Sex", form.sex === "female" ? "Female" : "Male"],
     ["Height", `${form.heightCm} cm`],
     ["Weight", `${form.weightKg} kg`],
-    ["Blood pressure", form.bpInputType === "exact" ? `${form.systolicBp}/${form.diastolicBp} mmHg` : form.bpInputType === "category" ? labelize(form.bpCategory) : "Not sure"],
-    ["Total cholesterol", form.cholesterolInputType === "exact" ? `${form.cholesterol} mg/dL` : form.cholesterolInputType === "category" ? labelize(form.cholesterolCategory) : "Not sure"],
-    ["Blood glucose", form.glucoseInputType === "exact" ? `${form.glucose} mg/dL` : form.glucoseInputType === "category" ? labelize(form.glucoseCategory) : "Not sure"],
-    ["Diabetes history", labelize(form.diabetes)],
+    ["Blood pressure", `${form.systolicBp}/${form.diastolicBp} mmHg`],
+    ["Total cholesterol", labelize(form.cholesterolCategory)],
+    ["Blood glucose", labelize(form.glucoseCategory)],
     ["Smoking status", labelize(form.smoking)],
     ["Regular physical activity", labelize(form.activity)],
     ["Alcohol intake", labelize(form.alcoholIntake)],
-    ["Current symptoms", labelize(form.symptoms)],
   ];
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       {rows.map(([label, value]) => (
         <div key={label} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</span>
-          <strong className="mt-1 block text-slate-900">{value}</strong>
+          <span className="block text-xs font-bold uppercase tracking-wide text-slate-600">{label}</span>
+          <strong className="mt-1 block text-slate-950">{value}</strong>
         </div>
       ))}
     </div>

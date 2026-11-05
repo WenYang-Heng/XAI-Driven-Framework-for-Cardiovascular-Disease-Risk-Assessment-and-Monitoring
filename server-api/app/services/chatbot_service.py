@@ -3,7 +3,7 @@ import time
 from typing import Any
 
 from app.models import ChatbotHistoryMessage
-from app.services import chatbot_ai_service, chatbot_fallback_service
+from app.services import chatbot_ai_service, chatbot_fallback_service, chatbot_rag_service
 
 
 MAX_HISTORY_MESSAGES = 6
@@ -56,15 +56,21 @@ async def generate_chatbot_message(
     started_at = time.perf_counter()
     normalised_context = _compact_page_context(page_context or {"page": "unknown"})
     history = conversation_history[-MAX_HISTORY_MESSAGES:]
-    suggested_questions = chatbot_fallback_service.guided_questions_for_context(normalised_context)
+    suggested_questions = _contextual_suggested_questions(normalised_context)
+    retrieved_knowledge = chatbot_rag_service.retrieve_knowledge(message, normalised_context)
     page = str(normalised_context.get("page", "unknown"))
 
     _log(
         f"request received page={page} history={len(history)} "
         f"message_length={len(message.strip())}"
     )
+    _log(
+        "rag "
+        f"hits={len(retrieved_knowledge)} "
+        f"topics={','.join(str(item.get('topic')) for item in retrieved_knowledge)}"
+    )
 
-    if not _is_in_scope(message, suggested_questions):
+    if not _is_in_scope(message, suggested_questions, history):
         latency_ms = int((time.perf_counter() - started_at) * 1000)
         _log(f"scope_blocked latency_ms={latency_ms} suggested_questions={len(suggested_questions)}")
         return {
@@ -79,9 +85,14 @@ async def generate_chatbot_message(
             page_context=normalised_context,
             conversation_history=history,
             suggested_questions=suggested_questions,
+            retrieved_knowledge=retrieved_knowledge,
         )
-        reply = result["reply"] or chatbot_fallback_service.generate_fallback_reply(message, normalised_context)
-        suggested_questions = _next_suggested_questions(reply, suggested_questions)
+        reply = result["reply"] or chatbot_fallback_service.generate_fallback_reply(
+            message,
+            normalised_context,
+            retrieved_knowledge,
+        )
+        suggested_questions = _next_suggested_questions(reply, suggested_questions, normalised_context)
         _log(
             "openai_success "
             f"latency_ms={result.get('latency_ms')} "
@@ -91,8 +102,12 @@ async def generate_chatbot_message(
         )
     except Exception as error:
         _log(f"fallback_used reason={_safe_reason(error)} suggested_questions={len(suggested_questions)}")
-        reply = chatbot_fallback_service.generate_fallback_reply(message, normalised_context)
-        suggested_questions = _next_suggested_questions(reply, suggested_questions)
+        reply = chatbot_fallback_service.generate_fallback_reply(
+            message,
+            normalised_context,
+            retrieved_knowledge,
+        )
+        suggested_questions = _next_suggested_questions(reply, suggested_questions, normalised_context)
 
     return {
         "reply": reply,
@@ -156,16 +171,73 @@ def _compact_page_context(page_context: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
-def _is_in_scope(message: str, suggested_questions: list[str]) -> bool:
+def _is_in_scope(
+    message: str,
+    suggested_questions: list[str],
+    conversation_history: list[ChatbotHistoryMessage],
+) -> bool:
     lowered = message.strip().lower()
     if not lowered:
         return False
     if any(lowered == question.lower() for question in suggested_questions):
         return True
+    if _is_contextual_follow_up(lowered, conversation_history):
+        return True
     return any(term in lowered for term in ALLOWED_TERMS)
 
 
-def _next_suggested_questions(reply: str, current_questions: list[str]) -> list[str]:
+def _is_contextual_follow_up(message: str, conversation_history: list[ChatbotHistoryMessage]) -> bool:
+    follow_up_terms = {
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "please",
+        "go ahead",
+        "tell me more",
+        "more",
+        "how",
+        "why",
+    }
+    if message not in follow_up_terms:
+        return False
+    return any(item.role == "assistant" and item.content.strip() for item in conversation_history[-3:])
+
+
+def _contextual_suggested_questions(page_context: dict[str, Any]) -> list[str]:
+    questions = chatbot_fallback_service.guided_questions_for_context(page_context)
+    top_factors = [str(item).lower() for item in page_context.get("top_factors", []) if item]
+    missing_inputs = [str(item).lower() for item in page_context.get("missing_inputs", []) if item]
+    risk_category = str(page_context.get("risk_category") or page_context.get("latest_risk_category") or "").lower()
+    confidence_level = str(page_context.get("confidence_level") or "").lower()
+    page = str(page_context.get("page", "unknown"))
+
+    dynamic_questions: list[str] = []
+    if risk_category == "high":
+        dynamic_questions.extend(["What should I focus on first?", "How can I lower my risk safely?"])
+    elif risk_category == "moderate":
+        dynamic_questions.append("What changes would help most?")
+    elif risk_category == "low":
+        dynamic_questions.append("How can I keep my risk low?")
+
+    if confidence_level in {"low", "medium"} or missing_inputs:
+        dynamic_questions.append("What missing values should I add?")
+
+    if _contains_any(top_factors, ["cholesterol"]):
+        dynamic_questions.extend(["How can I improve my cholesterol?", "What fibre-rich foods can I try?"])
+    if _contains_any(top_factors, ["activity", "exercise", "physical"]):
+        dynamic_questions.extend(["How can I increase activity safely?", "What is a realistic walking goal?"])
+    if _contains_any([*top_factors, *missing_inputs], ["blood pressure", "diastolic", "systolic"]):
+        dynamic_questions.append("How do I track my blood pressure?")
+    if page == "action_plan":
+        dynamic_questions.append("How do I set a reminder for this?")
+
+    return _unique_questions([*dynamic_questions, *questions])[:5]
+
+
+def _next_suggested_questions(reply: str, current_questions: list[str], page_context: dict[str, Any]) -> list[str]:
     lowered = reply.lower()
     dynamic_questions: list[str] = []
 
@@ -173,19 +245,39 @@ def _next_suggested_questions(reply: str, current_questions: list[str]) -> list[
         dynamic_questions.append("What should I do today?")
     if "keep up healthy habits" in lowered or "healthy habits" in lowered:
         dynamic_questions.append("How can I keep up healthy habits?")
-    if "monitoring" in lowered or "monitor" in lowered:
+    if "blood pressure" in lowered:
+        dynamic_questions.append("How do I track my blood pressure?")
+    elif "monitoring" in lowered or "monitor" in lowered:
         dynamic_questions.append("What should I monitor regularly?")
+    if "physical activity" in lowered or "walking" in lowered:
+        dynamic_questions.append("How can I start walking more?")
+    if "cholesterol" in lowered:
+        dynamic_questions.append("What foods help with cholesterol?")
     if "action plan" in lowered:
         dynamic_questions.append("How do I create an action plan?")
     if "reminder" in lowered:
         dynamic_questions.append("How do reminders work?")
+    if "would you like" in lowered and not dynamic_questions:
+        dynamic_questions.append("What is one simple next step?")
 
-    merged: list[str] = []
-    for question in [*dynamic_questions, *current_questions]:
-        if question not in merged:
-            merged.append(question)
+    merged = _unique_questions([*dynamic_questions, *_contextual_suggested_questions(page_context), *current_questions])
 
     return merged[:5]
+
+
+def _contains_any(values: list[str], terms: list[str]) -> bool:
+    return any(term in value for value in values for term in terms)
+
+
+def _unique_questions(questions: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for question in questions:
+        key = question.lower()
+        if key not in seen:
+            merged.append(question)
+            seen.add(key)
+    return merged
 
 
 def _development_logging_enabled() -> bool:

@@ -14,7 +14,6 @@ export const fallbackPlans: PlanItem[] = [
     priority: "High Priority",
     factor: "Physical activity",
     timeframe: "This week",
-    difficulty: "Moderate",
     reason:
       "Regular activity supports blood pressure, cholesterol, glucose control, weight, sleep, and overall heart health.",
     nextStep: "Start with 10 minutes after dinner today, then increase gradually.",
@@ -26,7 +25,6 @@ export const fallbackPlans: PlanItem[] = [
     priority: "High Priority",
     factor: "Blood pressure",
     timeframe: "Next 7 days",
-    difficulty: "Moderate",
     reason:
       "Lowering salt intake can help users manage blood pressure, which is a major modifiable CVD risk factor.",
     nextStep: "Choose one lower-salt option for lunch and dinner.",
@@ -38,7 +36,6 @@ export const fallbackPlans: PlanItem[] = [
     priority: "Medium Priority",
     factor: "Monitoring",
     timeframe: "Twice weekly",
-    difficulty: "Easy",
     reason:
       "Consistent monitoring helps users notice patterns and discuss changes with a healthcare professional.",
     nextStep: "Set a morning reminder for two fixed days each week.",
@@ -75,7 +72,6 @@ export function buildPlans(riskFactors: RiskFactor[]): PlanItem[] {
           priority: index === 0 ? "High Priority" : "Medium Priority",
           factor: factor.name,
           timeframe: "Next 14 days",
-          difficulty: "Moderate",
           reason: factor.description,
           nextStep: "Add oats, beans, fruit, or vegetables to one meal today.",
           barrier: "If cooking is difficult, start with fruit or ready-to-eat fibre options.",
@@ -89,7 +85,6 @@ export function buildPlans(riskFactors: RiskFactor[]): PlanItem[] {
           priority: "High Priority",
           factor: factor.name,
           timeframe: "This week",
-          difficulty: "Challenging",
           reason: factor.description,
           nextStep: "Pick one trigger time and replace it with a safer routine.",
           barrier: "Use support from a healthcare professional or quitline if cravings are strong.",
@@ -164,7 +159,6 @@ export function buildGuidedPlan(form: GuidedPlanForm): PlanItem {
     priority: form.readiness === "high" ? "High Priority" : "Medium Priority",
     factor: focusPlan.factor,
     timeframe: form.reminder === "weekend" ? "This weekend" : `Next ${form.reminder}`,
-    difficulty: form.readiness === "low" ? "Easy" : "Moderate",
     reason: focusPlan.reason,
     nextStep,
     barrier: barrierPlan,
@@ -177,3 +171,4 @@ export function priorityTone(priority: PlanItem["priority"]) {
   if (priority === "Medium Priority") return "cyan";
   return "slate";
 }
+

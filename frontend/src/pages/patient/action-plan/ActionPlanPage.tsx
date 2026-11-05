@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   HeartPulse,
   ListChecks,
+  Loader2,
+  AlertCircle,
   TrendingDown,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -59,7 +61,7 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
     };
   }, [assessmentId, userId]);
 
-  async function handleGenerateActionPlan(regenerate = false) {
+  async function handleGenerateActionPlan() {
     if (!userId || !assessmentId) {
       setGenerationError("Complete and save an assessment before generating an action plan.");
       return;
@@ -68,7 +70,7 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
     setIsGenerating(true);
     setGenerationError(null);
     try {
-      const data = await generateActionPlan({ assessmentId, userId, regenerate });
+      const data = await generateActionPlan({ assessmentId, userId, regenerate: false });
       setGeneratedActionPlan(mapGeneratedActionPlan(data.action_plan));
     } catch (error) {
       setGenerationError(error instanceof Error ? error.message : "Unable to generate action plan.");
@@ -79,60 +81,6 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
 
   return (
     <section className="grid gap-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-3xl">
-          <p className="text-sm font-semibold text-cyan-700">Lifestyle recommendation module</p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
-            Generated action plan
-          </h2>
-          <p className="mt-4 text-base leading-7 text-slate-600">
-            Recommendations are prioritized from the user's risk category and modifiable risk factors, then written as small, measurable actions.
-          </p>
-        </div>
-      </div>
-
-      <Card className="p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h3 className="text-lg font-bold tracking-tight text-slate-950">
-              AI-assisted action plan
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              Generate specific examples and practical next steps from the latest saved assessment.
-            </p>
-            {isLoadingPlan ? (
-              <p className="mt-2 text-sm font-semibold text-slate-500">
-                Loading latest saved plan...
-              </p>
-            ) : null}
-            {generatedActionPlan ? (
-              <p className="mt-2 text-sm font-semibold text-cyan-700">
-                {generatedActionPlan.generated_by === "ai_assisted" ? "AI-assisted" : "Rule-based fallback"} plan loaded.
-              </p>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Button disabled={isGenerating || isLoadingPlan || !assessmentId} onClick={() => handleGenerateActionPlan(false)}>
-              {isGenerating ? "Generating..." : "Generate Action Plan"}
-            </Button>
-            <Button variant="secondary" disabled={isGenerating || isLoadingPlan || !assessmentId} onClick={() => handleGenerateActionPlan(true)}>
-              Regenerate
-            </Button>
-          </div>
-        </div>
-        {generationError ? (
-          <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm leading-6 text-red-700">
-            {generationError}
-          </div>
-        ) : null}
-        {generatedActionPlan ? (
-          <div className="mt-4 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
-            <strong className="text-cyan-950">{generatedActionPlan.title}</strong>
-            <span className="mt-1 block">{generatedActionPlan.summary}</span>
-          </div>
-        ) : null}
-      </Card>
-
       <div className="grid gap-4 md:grid-cols-3">
         <PlanMetric icon={HeartPulse} label="Risk category" value={currentCategory.label} tone={currentCategory.tone} />
         <PlanMetric icon={ListChecks} label="Total actions" value={plans.length.toString()} tone="cyan" />
@@ -142,11 +90,28 @@ export function ActionPlanPage({ currentCategory, riskFactors, userId, assessmen
       <Card className="p-6">
         <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <CardHeader title="Action list" subtitle="Each action includes why, what to do next, and how to measure it." />
-          <Badge tone={currentCategory.tone}>Based on {currentCategory.label}</Badge>
+          <Button disabled={isGenerating || isLoadingPlan || !assessmentId} onClick={handleGenerateActionPlan}>
+            {isGenerating ? "Generating..." : "Generate action plan"}
+            {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          </Button>
         </div>
 
-        <div className="mb-5 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
-          This plan supports self-management and does not replace medical advice or prescribed treatment.
+        {generationError ? (
+          <div className="mb-5 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm leading-6 text-red-700">
+            {generationError}
+          </div>
+        ) : null}
+
+        {generatedActionPlan ? (
+          <div className="mb-5 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
+            <strong className="text-cyan-950">Plan summary</strong>
+            <span className="mt-1 block">{generatedActionPlan.summary}</span>
+          </div>
+        ) : null}
+
+        <div className="mb-5 flex items-start gap-3 rounded-2xl border border-cyan-100 bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-cyan-700" />
+          <span>This plan supports self-management and does not replace medical advice or prescribed treatment.</span>
         </div>
 
         {isLoadingPlan ? (
@@ -183,7 +148,6 @@ function mapGeneratedActionPlan(rawPlan: any): GeneratedActionPlan {
       priority: priorityLabel(item.priority),
       factor: item.factor,
       timeframe: item.timeframe,
-      difficulty: difficultyLabel(item.difficulty),
       reason: item.reason,
       nextStep: item.next_step,
       barrier: item.barrier_plan,
@@ -198,12 +162,6 @@ function priorityLabel(value: string): PlanItem["priority"] {
   if (value === "high") return "High Priority";
   if (value === "medium") return "Medium Priority";
   return "Supportive";
-}
-
-function difficultyLabel(value: string): PlanItem["difficulty"] {
-  if (value === "hard") return "Challenging";
-  if (value === "moderate") return "Moderate";
-  return "Easy";
 }
 
 export function ActionPlanSummary({ riskFactors }: { riskFactors: RiskFactor[] }) {

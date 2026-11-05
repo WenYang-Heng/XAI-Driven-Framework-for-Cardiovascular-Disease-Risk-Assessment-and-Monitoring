@@ -1,6 +1,9 @@
 from typing import Any
 
 
+FOLLOW_UP_CONFIRMATIONS = {"yes", "yeah", "yep", "sure", "ok", "okay", "please", "go ahead", "more"}
+
+
 def guided_questions_for_context(page_context: dict[str, Any]) -> list[str]:
     page = page_context.get("page", "unknown")
     if page == "assessment_result":
@@ -51,7 +54,11 @@ def guided_questions_for_context(page_context: dict[str, Any]) -> list[str]:
     return questions[:5]
 
 
-def generate_fallback_reply(message: str, page_context: dict[str, Any]) -> str:
+def generate_fallback_reply(
+    message: str,
+    page_context: dict[str, Any],
+    retrieved_knowledge: list[dict[str, Any]] | None = None,
+) -> str:
     lowered = message.lower()
     risk_score = page_context.get("risk_score") or page_context.get("latest_risk_score")
     risk_category = page_context.get("risk_category") or page_context.get("latest_risk_category")
@@ -92,11 +99,24 @@ def generate_fallback_reply(message: str, page_context: dict[str, Any]) -> str:
             "with a healthcare professional."
         )
 
+    if lowered.strip() in FOLLOW_UP_CONFIRMATIONS:
+        top_factors = page_context.get("top_factors") if isinstance(page_context.get("top_factors"), list) else []
+        factor_text = ", ".join(str(factor) for factor in top_factors[:3]) if top_factors else "your main risk factors"
+        return (
+            f"Here are practical tips for {factor_text}: start with a 10-minute walk on most days, choose more fibre-rich "
+            "foods such as oats, beans, vegetables, or fruit, and track blood pressure if you have a monitor. Pick one small "
+            "step first and repeat it consistently."
+        )
+
     if any(term in lowered for term in ["reminder", "remind", "due", "schedule"]):
         return (
             "Reminders help you remember practical health actions from this app, such as a walk, a blood pressure check, "
             "or reviewing your action plan. You can create, complete, or delete reminders from the Reminders page."
         )
+
+    knowledge_reply = _knowledge_fallback_reply(retrieved_knowledge or [])
+    if knowledge_reply:
+        return knowledge_reply
 
     return (
         "I can help explain your risk result, assessment inputs, action plan, or how to use this page. "
@@ -109,3 +129,39 @@ def out_of_scope_reply() -> str:
         "I can only help with your CVD risk assessment, action plan, reminders, and how to use this app. "
         "You can ask me about your risk score, action items, or what to do next."
     )
+
+
+def _knowledge_fallback_reply(retrieved_knowledge: list[dict[str, Any]]) -> str | None:
+    if not retrieved_knowledge:
+        return None
+
+    primary = retrieved_knowledge[0]
+    topic = str(primary.get("topic") or "")
+    content = str(primary.get("content") or "").strip()
+    if not content:
+        return None
+
+    next_step = _topic_next_step(topic)
+    if next_step:
+        return f"{content} A practical next step is to {next_step}"
+    return content
+
+
+def _topic_next_step(topic: str) -> str:
+    if topic == "cholesterol":
+        return "choose one fibre-rich food today, such as oats, beans, vegetables, or fruit."
+    if topic == "physical_activity":
+        return "start with a short walk or a few movement breaks, then build up gradually."
+    if topic == "blood_pressure":
+        return "record your blood pressure if you know it, or choose 'not sure' and update it later."
+    if topic == "diet":
+        return "pick one lower-salt or higher-fibre food swap that feels realistic."
+    if topic == "smoking":
+        return "consider support for quitting and discuss options with a healthcare professional."
+    if topic == "blood_sugar":
+        return "add your blood sugar category if you know it, or follow up with testing if you are unsure."
+    if topic == "sleep":
+        return "keep a consistent sleep routine where possible."
+    if topic == "heart_health_basics":
+        return "pick one small habit to work on first instead of changing everything at once."
+    return ""

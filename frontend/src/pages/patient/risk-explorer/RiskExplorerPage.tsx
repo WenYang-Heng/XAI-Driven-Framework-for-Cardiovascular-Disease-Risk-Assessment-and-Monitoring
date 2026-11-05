@@ -47,9 +47,7 @@ export function RiskExplorerPage({
     return (
       <section className="grid gap-6">
         <SectionTitle
-          label="Risk explanation module"
-          title="Assessment needed first"
-          description="The risk explanation will appear after the user completes the CVD risk assessment."
+          title="Risk Explorer"
         />
         <Card className="grid gap-4 p-6 md:grid-cols-[1fr_auto] md:items-center">
           <div>
@@ -70,12 +68,10 @@ export function RiskExplorerPage({
   return (
     <section className="grid gap-6">
       <SectionTitle
-        label="Risk explanation module"
-        title="Understand your risk result"
-        description="This page explains the estimated score, category, and top contributing factors using non-technical language."
+        title="Risk Explorer"
       />
 
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+      <div className="grid gap-6">
         <RiskScoreCard score={currentRisk} category={currentCategory} />
         <TopRiskFactors factors={riskFactors} />
       </div>
@@ -84,21 +80,15 @@ export function RiskExplorerPage({
 }
 
 function SectionTitle({
-  label,
   title,
-  description,
 }: {
-  label: string;
   title: string;
-  description: string;
 }) {
   return (
     <div className="max-w-3xl">
-      <p className="text-sm font-semibold text-cyan-700">{label}</p>
       <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-950 md:text-4xl">
         {title}
       </h2>
-      <p className="mt-4 text-base leading-7 text-slate-600">{description}</p>
     </div>
   );
 }

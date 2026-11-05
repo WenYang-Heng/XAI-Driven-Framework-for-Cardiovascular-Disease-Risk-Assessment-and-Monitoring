@@ -2,7 +2,8 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException, Query
 
-from app.models import ReminderRequest, ReminderUpdateRequest
+from app.models import ReminderRequest, ReminderTestEmailRequest, ReminderUpdateRequest
+from app.services.email_service import EmailNotConfiguredError
 from app.services import storage
 
 
@@ -34,6 +35,31 @@ def list_reminders(user_id: str) -> dict:
 async def create_reminder(request: ReminderRequest) -> dict:
     reminder = await storage.create_reminder(request.model_dump())
     return {"success": True, "reminder": reminder}
+
+
+@router.post("/{reminder_id}/send-test-email")
+async def send_test_reminder_email(
+    reminder_id: str,
+    request: ReminderTestEmailRequest,
+    user_id: str = Query(...),
+) -> dict:
+    try:
+        result = await storage.send_test_reminder_email(
+            reminder_id,
+            user_id,
+            to_email=request.to_email,
+            recipient_name=request.recipient_name,
+        )
+    except EmailNotConfiguredError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Unable to send reminder email: {error}") from error
+
+    if not result:
+        raise HTTPException(status_code=404, detail="Reminder not found.")
+    return {"success": True, **result}
 
 
 @router.patch("/{reminder_id}")

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from __future__ import annotations
 
 import json
 import pickle
@@ -12,8 +13,18 @@ import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    brier_score_loss,
+    confusion_matrix,
+    f1_score,
+    log_loss,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -51,6 +62,10 @@ FEATURE_LABELS = {
     "active": "Physical activity",
     "alco": "Alcohol intake",
 }
+FACTOR_GROUP_LABELS = {
+    "ap_hi": "Blood Pressure",
+    "ap_lo": "Blood Pressure",
+}
 
 
 def _build_models() -> dict[str, Pipeline]:
@@ -72,6 +87,23 @@ def _build_models() -> dict[str, Pipeline]:
             [
                 ("imputer", SimpleImputer(strategy="median")),
                 ("classifier", GradientBoostingClassifier(random_state=42)),
+            ]
+        ),
+        "Neural Network": Pipeline(
+            [
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler()),
+                (
+                    "classifier",
+                    MLPClassifier(
+                        hidden_layer_sizes=(64, 32),
+                        activation="relu",
+                        solver="adam",
+                        max_iter=300,
+                        early_stopping=True,
+                        random_state=42,
+                    ),
+                ),
             ]
         ),
     }
@@ -112,24 +144,13 @@ def train_and_compare_non_domain_models() -> dict[str, Any]:
         pipeline.fit(x_train, y_train)
         probabilities = pipeline.predict_proba(x_test)[:, 1]
         predictions = (probabilities >= 0.5).astype(int)
-        tn, fp, fn, tp = confusion_matrix(y_test, predictions).ravel()
-        compared[name] = {
-            "accuracy": round(float(accuracy_score(y_test, predictions)), 4),
-            "precision": round(float(precision_score(y_test, predictions, zero_division=0)), 4),
-            "recall": round(float(recall_score(y_test, predictions, zero_division=0)), 4),
-            "f1_score": round(float(f1_score(y_test, predictions, zero_division=0)), 4),
-            "roc_auc": round(float(roc_auc_score(y_test, probabilities)), 4),
-            "confusion_matrix": {
-                "true_negative": int(tn),
-                "false_positive": int(fp),
-                "false_negative": int(fn),
-                "true_positive": int(tp),
-            },
-        }
+        compared[name] = _classification_metrics(y_test, predictions, probabilities)
         fitted_models[name] = pipeline
 
     selected_name = _select_best_model(compared)
     selected_pipeline = fitted_models[selected_name]
+    selected_probabilities = selected_pipeline.predict_proba(x_test)[:, 1]
+    selected_predictions = (selected_probabilities >= 0.5).astype(int)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     with MODEL_PATH.open("wb") as file:
         pickle.dump(selected_pipeline, file)
@@ -142,8 +163,10 @@ def train_and_compare_non_domain_models() -> dict[str, Any]:
         "model_version": MODEL_VERSION,
         "model_performance": compared[selected_name],
         "all_compared_model_metrics": compared,
+        "risk_band_analysis": _risk_band_analysis(y_test, selected_probabilities),
+        "subgroup_performance": _subgroup_performance(x_test, y_test, selected_predictions, selected_probabilities),
         "target_definition": "cardio = 1 indicates cardiovascular disease in the Kaggle dataset.",
-        "risk_thresholds": {"low": "<0.10", "moderate": "0.10 to <0.20", "high": ">=0.20"},
+        "risk_thresholds": {"low": "0.00 to 0.30", "moderate": "0.31 to 0.70", "high": "0.71 to 1.00"},
         "threshold_note": "TODO: Calibrate prototype risk thresholds against clinical target probabilities before production use.",
         "explanation_method": "SHAP as the primary local explanation when available, LIME as a supporting consistency check, and feature importance or coefficients as fallback.",
         "limitations": [
@@ -171,6 +194,105 @@ def _select_best_model(compared: dict[str, dict[str, Any]]) -> str:
             if auc_gap <= 0.01:
                 return candidate
     return best_name
+
+
+def _classification_metrics(y_true: pd.Series, predictions: np.ndarray, probabilities: np.ndarray) -> dict[str, Any]:
+    tn, fp, fn, tp = confusion_matrix(y_true, predictions).ravel()
+    specificity = tn / (tn + fp) if (tn + fp) else 0.0
+    false_negative_rate = fn / (fn + tp) if (fn + tp) else 0.0
+    false_positive_rate = fp / (fp + tn) if (fp + tn) else 0.0
+    return {
+        "accuracy": round(float(accuracy_score(y_true, predictions)), 4),
+        "precision": round(float(precision_score(y_true, predictions, zero_division=0)), 4),
+        "recall": round(float(recall_score(y_true, predictions, zero_division=0)), 4),
+        "specificity": round(float(specificity), 4),
+        "f1_score": round(float(f1_score(y_true, predictions, zero_division=0)), 4),
+        "roc_auc": round(float(roc_auc_score(y_true, probabilities)), 4),
+        "brier_score": round(float(brier_score_loss(y_true, probabilities)), 4),
+        "log_loss": round(float(log_loss(y_true, probabilities)), 4),
+        "false_negative_rate": round(float(false_negative_rate), 4),
+        "false_positive_rate": round(float(false_positive_rate), 4),
+        "confusion_matrix": {
+            "true_negative": int(tn),
+            "false_positive": int(fp),
+            "false_negative": int(fn),
+            "true_positive": int(tp),
+        },
+    }
+
+
+def _risk_band_analysis(y_true: pd.Series, probabilities: np.ndarray) -> dict[str, dict[str, float | int]]:
+    bands = {
+        "low": probabilities < 0.31,
+        "moderate": (probabilities >= 0.31) & (probabilities < 0.71),
+        "high": probabilities >= 0.71,
+    }
+    y_values = y_true.to_numpy()
+    analysis: dict[str, dict[str, float | int]] = {}
+    for band, mask in bands.items():
+        count = int(mask.sum())
+        if count == 0:
+            analysis[band] = {"count": 0, "average_predicted_risk": 0.0, "observed_cardio_rate": 0.0}
+            continue
+        analysis[band] = {
+            "count": count,
+            "average_predicted_risk": round(float(probabilities[mask].mean()), 4),
+            "observed_cardio_rate": round(float(y_values[mask].mean()), 4),
+        }
+    return analysis
+
+
+def _subgroup_performance(
+    x_test: pd.DataFrame,
+    y_true: pd.Series,
+    predictions: np.ndarray,
+    probabilities: np.ndarray,
+) -> dict[str, dict[str, dict[str, float | int | None]]]:
+    groups: dict[str, pd.Series] = {
+        "sex_female": x_test["gender"] == 1,
+        "sex_male": x_test["gender"] == 2,
+        "age_under_40": x_test["age_years"] < 40,
+        "age_40_to_49": x_test["age_years"].between(40, 49.999),
+        "age_50_to_59": x_test["age_years"].between(50, 59.999),
+        "age_60_plus": x_test["age_years"] >= 60,
+    }
+    return {
+        "test_set": {
+            name: _subgroup_metrics(y_true, predictions, probabilities, mask.to_numpy())
+            for name, mask in groups.items()
+        }
+    }
+
+
+def _subgroup_metrics(
+    y_true: pd.Series,
+    predictions: np.ndarray,
+    probabilities: np.ndarray,
+    mask: np.ndarray,
+) -> dict[str, float | int | None]:
+    count = int(mask.sum())
+    if count == 0:
+        return {
+            "count": 0,
+            "positive_rate": None,
+            "accuracy": None,
+            "recall": None,
+            "false_negative_rate": None,
+            "average_predicted_risk": None,
+        }
+    y_group = y_true.to_numpy()[mask]
+    prediction_group = predictions[mask]
+    probability_group = probabilities[mask]
+    positives = int(y_group.sum())
+    false_negatives = int(((prediction_group == 0) & (y_group == 1)).sum())
+    return {
+        "count": count,
+        "positive_rate": round(float(y_group.mean()), 4),
+        "accuracy": round(float(accuracy_score(y_group, prediction_group)), 4),
+        "recall": round(float(recall_score(y_group, prediction_group, zero_division=0)), 4),
+        "false_negative_rate": round(float(false_negatives / positives), 4) if positives else None,
+        "average_predicted_risk": round(float(probability_group.mean()), 4),
+    }
 
 
 def _load_artifacts() -> tuple[Pipeline, dict[str, Any]]:
@@ -255,9 +377,9 @@ def _confidence_level(missing_inputs: list[str]) -> str:
 
 
 def _risk_category(score: float) -> str:
-    if score >= 0.20:
+    if score >= 0.71:
         return "high"
-    if score >= 0.10:
+    if score >= 0.31:
         return "moderate"
     return "low"
 
@@ -363,13 +485,17 @@ def _consistency_note(primary_factors: list[dict[str, Any]], lime_factors: list[
 
 
 def _top_factors(feature_columns: list[str], row: pd.Series, values: np.ndarray) -> list[dict[str, Any]]:
-    pairs = sorted(zip(feature_columns, values, strict=False), key=lambda item: abs(float(item[1])), reverse=True)[:5]
-    total = sum(abs(float(value)) for _, value in pairs) or 1.0
+    grouped = _group_factor_values(feature_columns, row, values)
+    pairs = sorted(grouped.values(), key=lambda item: abs(float(item["value"])), reverse=True)[:5]
+    total = sum(abs(float(item["value"])) for item in pairs) or 1.0
     factors = []
-    for feature, value in pairs:
-        direction = "increased_risk" if float(value) >= 0 else "decreased_risk"
-        label = FEATURE_LABELS.get(feature, feature)
+    for item in pairs:
+        feature = item["feature"]
+        value = item["value"]
+        label = item["label"]
         importance = round(abs(float(value)) / total, 4)
+        input_value = float(item["input_value"])
+        direction = _factor_direction(feature, label, float(value), input_value)
         factors.append(
             {
                 "feature": feature,
@@ -378,14 +504,47 @@ def _top_factors(feature_columns: list[str], row: pd.Series, values: np.ndarray)
                 "importance": importance,
                 "importance_percentage": round(importance * 100, 1),
                 "plain_language": _plain_language(label, direction),
-                "input_value": round(float(row[feature]), 2),
+                "input_value": round(input_value, 2),
             }
         )
     return factors
 
 
+def _factor_direction(feature: str, label: str, contribution: float, input_value: float) -> str:
+    if feature == "smoke" and input_value <= 0:
+        return "decreased_risk"
+    if feature == "active" and input_value >= 1:
+        return "decreased_risk"
+    if feature == "alco" and input_value <= 0:
+        return "decreased_risk"
+    return "increased_risk" if contribution >= 0 else "decreased_risk"
+
+
+def _group_factor_values(feature_columns: list[str], row: pd.Series, values: np.ndarray) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for feature, raw_value in zip(feature_columns, values, strict=False):
+        label = FACTOR_GROUP_LABELS.get(feature, FEATURE_LABELS.get(feature, feature))
+        if label not in grouped:
+            grouped[label] = {
+                "feature": feature,
+                "label": label,
+                "value": 0.0,
+                "input_value": float(row[feature]),
+            }
+        grouped[label]["value"] += float(raw_value)
+        if abs(float(raw_value)) > abs(float(grouped[label].get("strongest_value", 0.0))):
+            grouped[label]["feature"] = feature
+            grouped[label]["input_value"] = float(row[feature])
+            grouped[label]["strongest_value"] = float(raw_value)
+    return grouped
+
+
 def _plain_language(label: str, direction: str) -> str:
     templates = {
+        "Blood Pressure": {
+            "increased_risk": "Your blood pressure may be higher than ideal and could add strain to your heart and blood vessels.",
+            "decreased_risk": "Your blood pressure is within a healthier range, which is a positive sign for heart health.",
+        },
         "Systolic blood pressure": {
             "increased_risk": "Your blood pressure reading may be higher than ideal and could add strain to your heart and blood vessels.",
             "decreased_risk": "Your blood pressure reading is within a healthier range, which is a positive sign for heart health.",

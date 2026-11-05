@@ -25,7 +25,6 @@ export type PlanItem = {
   priority: "High Priority" | "Medium Priority" | "Supportive";
   factor: string;
   timeframe: string;
-  difficulty: "Easy" | "Moderate" | "Challenging";
   reason: string;
   nextStep: string;
   barrier: string;
